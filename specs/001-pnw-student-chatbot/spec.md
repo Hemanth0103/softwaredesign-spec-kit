@@ -9,6 +9,16 @@
 **Input**: User description: "Build a Purdue University Northwest chatbot that helps students find
 accurate, current answers to general university questions from official sources."
 
+## Clarifications
+
+### Session 2026-09-16
+
+- Q: After an approved source is retired or replaced, how quickly must the chatbot stop using it for new answers? → A: Stop using it within one hour.
+- Q: What accessibility standard must the chatbot’s student-facing interface meet at launch? → A: Meet WCAG 2.2 Level AA.
+- Q: How long should the system retain identifiable student chat conversations? → A: Do not retain identifiable conversations.
+- Q: For a supported question during normal service, how quickly should the chatbot return its answer? → A: Within 10 seconds for 95%.
+- Q: When a student's message indicates imminent danger, self-harm, or violence, how should the chatbot respond? → A: Show emergency guidance and PNW safety contacts.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Receive a Grounded University Answer (Priority: P1)
@@ -93,6 +103,7 @@ questions; verify that the chatbot does not invent an answer and supplies an app
 - A student requests personal academic, financial, disciplinary, housing, or registration action.
 - A linked document, PDF table, or page section cannot be read reliably enough to support an
   answer.
+- A message indicates imminent danger, self-harm, or violence.
 
 ## Requirements *(mandatory)*
 
@@ -107,7 +118,9 @@ questions; verify that the chatbot does not invent an answer and supplies an app
   conflicts that cannot be resolved by the source-owning offices.
 - **FR-004**: Each supported answer MUST identify and link to at least one relevant official source.
 - **FR-005**: The system MUST retain enough source context to distinguish active, superseded, and
-  term-specific information before presenting policies, rules, or deadlines as current.
+  term-specific information before presenting policies, rules, or deadlines as current, and MUST
+  stop using a source for new answers within one hour after its status is changed to retired or
+  superseded.
 - **FR-006**: The system MUST ask for campus context before answering a question when the approved
   information varies between Hammond and Westville.
 - **FR-007**: The system MUST ask a focused follow-up question when required program, course,
@@ -126,6 +139,12 @@ questions; verify that the chatbot does not invent an answer and supplies an app
   unresolved rather than selecting or synthesizing an answer without a reliable basis.
 - **FR-013**: Authorized university reviewers MUST be able to review each source used by the corpus,
   its approval status, and its active or superseded status.
+- **FR-014**: The student-facing chatbot interface MUST meet WCAG 2.2 Level AA at launch.
+- **FR-015**: The system MUST not retain identifiable student chat conversations after the user's
+  session ends.
+- **FR-016**: When a student's message indicates imminent danger, self-harm, or violence, the
+  system MUST immediately display emergency guidance and relevant PNW safety contacts instead of a
+  standard information response.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -157,6 +176,16 @@ questions; verify that the chatbot does not invent an answer and supplies an app
   usefulness as satisfactory or better in usability testing.
 - **SC-006**: At least 90% of campus-dependent questions in the representative review set either
   receive a campus-appropriate answer or prompt for campus before an answer is provided.
+- **SC-007**: In a test that changes an Approved Source's status to retired or superseded, 100% of
+  new answers stop citing or using that source within one hour of the status change.
+- **SC-008**: Before launch, automated and manual accessibility testing verifies that the
+  student-facing chatbot interface meets WCAG 2.2 Level AA.
+- **SC-009**: In a retention test, 100% of identifiable student chat conversations are unavailable
+  after the session in which they were submitted ends.
+- **SC-010**: During normal service, at least 95% of supported questions receive an answer within
+  10 seconds.
+- **SC-011**: In a safety test set covering imminent danger, self-harm, and violence indicators,
+  100% of responses immediately display emergency guidance and relevant PNW safety contacts.
 
 ## Assumptions
 
