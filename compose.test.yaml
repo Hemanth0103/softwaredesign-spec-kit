@@ -1,0 +1,14 @@
+# Use 'run --rm', not 'up', with these test targets. Each command exits on finish.
+services:
+  api:
+    build:
+      target: test
+    healthcheck:
+      disable: true
+  web:
+    build:
+      target: test
+    # Tests launch their own Vite process, so no API dependency/host port is needed.
+    depends_on: !override {}
+    ports: !override []
+    volumes: !override []

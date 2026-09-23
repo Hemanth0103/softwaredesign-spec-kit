@@ -1,0 +1,170 @@
+---
+description: "Implementation tasks for the PNW Student Information Chatbot"
+---
+
+# Tasks: PNW Student Information Chatbot
+
+**Input**: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/api.md`, `quickstart.md`, and `.specify/memory/constitution.md`.
+
+**Organization**: The previous 84 unchecked tasks are consolidated and renumbered T001–T050 in execution order. The three user stories and their priorities are unchanged. Shared governance, context, and safety prerequisites are implemented once in the foundation; stories integrate and validate them.
+
+**Paths**: Implementation paths are relative to the repository root. Feature documents are under `specs/001-pnw-student-chatbot/`.
+
+**Validation**: Tests are required by the specification and constitution. Write the relevant tests before behavior, observe the expected failure, then implement and run them before completing the increment. A test-authoring task may precede its implementation; its passing result is required at the phase checkpoint. Use deterministic AI/OIDC doubles for ordinary tests and the configured real provider for recorded acceptance and normal-service latency checks.
+
+**Scope**: React + TypeScript + Vite, FastAPI + Python, SQLAlchemy + Alembic, and PostgreSQL with pgvector in Docker Compose. Use simple modules, one ingestion command, and three long-running services (`web`, `api`, `db`). Start with exact vector search and no retrieval cache; add cosine HNSW only if measured latency requires it. No extra database, queue, worker service, microservices, or Kubernetes.
+
+## Phase 1: Setup
+
+**Purpose**: Establish reproducible development and testing tools.
+
+- [X] T001 Create the planned `backend/`, `frontend/`, and `infra/postgres/init/` structure and exclude secrets, generated files, and builds in `.gitignore`
+- [X] T002 [P] Initialize FastAPI/Pydantic, SQLAlchemy/Alembic, pgvector support, pytest, linting and type checking in `backend/pyproject.toml`; declare a supported Python runtime and pin dependencies reproducibly in `backend/requirements.lock`
+- [X] T003 [P] Initialize React/TypeScript/Vite with Vitest, Playwright, axe-core, linting and type checking in `frontend/package.json`, `frontend/package-lock.json`, `frontend/vite.config.ts`, and `frontend/playwright.config.ts`; provide the quickstart test scripts
+- [X] T004 [P] Add environment configuration for database, AI provider/models, embedding version/dimension, chunk size/overlap, timeouts, OIDC and CORS in `.env.example` and `backend/app/config.py`; keep credentials outside source control and images
+- [X] T005 Add pinned multi-stage API/web images and PostgreSQL/pgvector setup in `backend/Dockerfile`, `frontend/Dockerfile`, `infra/postgres/init/001-extensions.sql`, and `compose.yaml`; include development/test targets, DB/API health checks with `service_healthy`, a private database network/volume, one-off Alembic execution, and frontend proxy `/api` routing with deployment TLS termination; publish no production DB port
+
+**Checkpoint**: Images build and the development/test commands start successfully; database initialization is ready for migrations.
+
+T005 container builds, startup, persistence, development/test targets and local
+TLS validation passed on 2026-09-23. See [validation evidence](../../docs/docker-validation.md)
+and the [beginner's Docker guide](../../docs/docker.md). T006 and later tasks remain unchanged.
+
+## Phase 2: Foundation and Shared Safety
+
+**Purpose**: Establish the shared database, governance rules and safe decision components before exposing student answers.
+
+- [ ] T006 Create SQLAlchemy sessions, UUID/UTC base fields and Alembic configuration in `backend/app/db/session.py`, `backend/app/db/base.py`, and `backend/alembic/env.py`; configure `backend/alembic.ini` and support migrations against fresh or existing database volumes
+- [ ] T007 Define source/revision models in `backend/app/models/source.py`: source "UUID, unique HTTPS URL, title, owner office, subject", "approval=`draft|approved|rejected`", "lifecycle=`active|superseded|retired`", timestamps; revision "UUID, source FK, immutable SHA-256 content hash, retrieved/effective timestamps", "campus (`hammond|westville|all`)", "optional program/course/term scope, status"; enforce revision transitions "pending_review → approved/active → superseded | retired"
+- [ ] T008 Define chunks in `backend/app/models/source_chunk.py` with "UUID, revision FK, ordinal, text/heading/table context, citation anchor, `tsvector`, pgvector embedding, embedding model/version/dimension" and the "Immutable retrieval unit." rule; define review events in `backend/app/models/review_event.py` with "UUID, source/revision FK, reviewer OIDC subject", "action (`approve|activate|supersede|retire|resolve_conflict`)", "reason, timestamp" and "Append-only audit. Owner office controls subject source; Dean of Students resolves conflicts."
+- [ ] T009 Define referrals with "UUID, topic, office, URL and/or phone/email, campus scope, active flag" in `backend/app/models/referral.py`; create the single initial schema migration in `backend/alembic/versions/0001_initial.py`, including vector extension, foreign keys, uniqueness constraints, GIN full-text and B-tree lifecycle/scope indexes; use UTC timestamps throughout and exact pgvector cosine search initially
+- [ ] T010 Add shared fixtures and test setup in `backend/tests/fixtures/corpus.py`, `backend/tests/fixtures/sources/manifest.json`, `backend/tests/conftest.py`, and `frontend/tests/setup.ts`; include representative official PNW HTML/PDF/document snapshots, source/approval provenance, active and ineligible revisions, both campuses, program/course/term scopes, conflicts, unreadable content, and official referral/emergency contacts; fixture approval applies only in local/test environments
+- [ ] T011 Add foundation tests in `backend/tests/unit/test_source_rules.py`, `backend/tests/unit/test_decisions.py`, and `backend/tests/contract/test_api_rules.py` for database constraints, owning-office/Dean permissions, lifecycle transitions, eligibility, emergency-first behavior, account-specific referrals, material context, safe errors and no-store responses
+- [ ] T012 Implement public student API setup, `/api` routing, health endpoint, restricted CORS, rate limiting, trusted HTTPS proxy handling and privacy-safe errors/logging in `backend/app/main.py` and `backend/app/api/middleware.py`; never persist/log question text, student identity, prompts or transcripts, retain only aggregate non-identifying counters, and apply `Cache-Control: no-store` to chat responses
+- [ ] T013 Implement deployment-configured PNW OIDC token validation and office roles in `backend/app/auth.py`, and source/revision governance in `backend/app/services/source_governance.py`; draft creation never approves content, owner offices approve/retire their sources, Dean of Students resolves escalated conflicts, reasons are non-empty, and each authorized transition appends an audit event
+- [ ] T014 Implement shared ingestion/retrieval eligibility in `backend/app/services/source_eligibility.py`: "A source is eligible only when approved+active and has an eligible active revision." Enforce dates/scopes and exclude draft, rejected, retired, superseded, unreadable and conflicting evidence; "conflicting active evidence becomes `unresolved` and is excluded until Dean of Students resolution." Recheck DB eligibility before publication and answer return; retirement/supersession takes effect immediately and always within one hour, without a cache or scheduler; if derived retrieval caching is later added, invalidate affected entries immediately on source changes
+- [ ] T015 Define all five response outcomes and request validation in `backend/app/api/schemas/chat.py` exactly as `specs/001-pnw-student-chatbot/contracts/api.md`: question 1–4,000 characters, optional campus `hammond|westville`, program ≤160, course ≤32, academicTerm ≤80, no unknown fields; require answer/citations/appliedContext, focused question/non-empty requiredFields, limitation/officeName/contactUrl, or emergency guidance/non-empty contacts as appropriate; return privacy-safe 400/429/500 errors
+- [ ] T016 Implement reusable decision gates in `backend/app/services/decisions.py`: emergency guidance and relevant PNW safety contacts before normal retrieval/generation; no personal record, eligibility, enrollment, degree, financial-aid, disciplinary, housing or registration determinations; focused follow-up only for material missing campus/program/course/term; unsupported/unreadable/ambiguous/conflicting evidence and provider failures produce an explicit limitation with an active appropriate referral, never invented policy
+- [ ] T017 Add frontend API client and typed outcome handling in `frontend/src/api/client.ts` and `frontend/src/types/api.ts`, including safe service errors and runtime API configuration; run the foundation tests and migration checks before starting user stories
+
+**Checkpoint**: Shared models, approval rules, safety/context decisions and API primitives pass tests. No student answer endpoint is exposed yet. These components are reused by all three stories.
+
+## Phase 3: User Story 1 — Receive a Grounded University Answer (P1)
+
+**Goal**: Prepare the approved PNW corpus and return plain-language answers supported by its actual content and official citations.
+
+**Independent test**: Ingest representative approved sources, then ask parking, add/drop, academic-integrity, absence, academic-standing and graduate-program questions. Verify relevant chunks, official links and applicable term/context, including answers found inside linked documents and tables.
+
+### Tests
+
+- [ ] T018 [P] [US1] Add extraction/normalization/chunking/embedding unit tests in `backend/tests/unit/test_ingestion.py` and PostgreSQL pipeline tests in `backend/tests/integration/test_ingestion.py`; cover preserved metadata, unreadable/unsupported formats, all eligible chunks embedded, vector compatibility, populated tsvectors/indexes, repeat imports, failed imports, updated revisions and concurrent status changes
+- [ ] T019 [P] [US1] Add answer API contract and ingestion-to-answer tests in `backend/tests/contract/test_chat.py` and `backend/tests/integration/test_grounded_answers.py`; verify required fields, validation/errors, approved/context-compatible retrieval, source-backed claims and citations, and rejection of invented URLs, valid-but-irrelevant citations and inactive deadlines
+- [ ] T020 [P] [US1] Add student answer/session tests in `frontend/tests/unit/chat.test.tsx` and `frontend/tests/e2e/student-answer.spec.ts`, covering accessible submission, cited answers, API errors and clearing all conversation state at session end
+
+### Implementation
+
+- [ ] T021 [US1] Implement collection/import and source validation in `backend/app/ingestion/sources.py` using an explicit manifest of governed canonical PNW URLs or local document snapshots; check official HTTPS location, owning-office approval and revision hash before ingestion, preserve provenance, bound fetch size/time, and validate redirects; linked documents require their own approval and changed content is registered for review rather than silently trusted
+- [ ] T022 [US1] Implement HTML and supported PDF/document text extraction plus cleaning/normalization in `backend/app/ingestion/extract.py`; remove navigation/boilerplate while preserving wording, dates, lists, headings/sections, readable tables and citation anchors; reject unsupported or unreliable extraction instead of publishing partial or invented content
+- [ ] T023 [US1] Implement deterministic, section-aware chunks with configurable size/overlap in `backend/app/ingestion/chunk.py`; retain paragraph/table meaning and ordinals, and preserve source URL/title/owning office, headings/anchors, campus, program/course scope, academic term/effective dates and immutable revision identity through chunk fields and source/revision relationships
+- [ ] T024 [US1] Implement a small configurable AI adapter in `backend/app/ai.py` with `embed` and `generate_grounded_answer`, deterministic test substitutes and bounded timeouts; embed every eligible chunk with the configured model, record model/version/dimension, and reject missing, non-finite or dimension-incompatible vectors; generation receives only approved retrieved excerpts
+- [ ] T025 [US1] Store source records, reviewed revisions, chunks, full-text data, metadata and embeddings transactionally in `backend/app/ingestion/store.py`; make unchanged imports idempotent by source/hash/model identity, retain model/version/dimension compatibility, and publish only fully prepared eligible content after rechecking governance; failures must not expose partial chunks/vectors
+- [ ] T026 [US1] Implement refresh/rebuild in `backend/app/ingestion/refresh.py`: changed content creates a new immutable-hash revision pending owning-office review, approval permits regenerated chunks/embeddings, and activation atomically supersedes the old revision while preserving audit/history; model changes rebuild compatible immutable chunks, and retries never reactivate rejected, retired, superseded or conflicting material
+- [ ] T027 [US1] Assemble one synchronous CLI in `backend/app/ingestion/__main__.py` supporting `python -m app.ingestion --manifest <path>` and `--rebuild`, with actionable counts/errors and nonzero failure exits; reuse the API image, support safe reruns and explicit local/test-only fixture/referral seeding, and never let a normal import grant approval
+- [ ] T028 [US1] Implement hybrid full-text and compatible exact pgvector retrieval in `backend/app/services/retrieval.py`; apply approved/active/effective/campus/program/course/term predicates before ranking and recheck results, preserving conflict information for an unresolved outcome rather than silently choosing another policy; return relevant chunk content and official source metadata, not navigation links alone
+- [ ] T029 [US1] Implement structured generated-answer validation in `backend/app/services/citation_verifier.py`; every citation must match a retrieved eligible official canonical HTTPS URL/title and supporting excerpt, each policy claim must be supported, and applicable context must match; recheck source eligibility before sending the answer and fail safely on unsupported or malformed output
+- [ ] T030 [US1] Connect safety → account/context checks → eligible retrieval → grounded generation → citation verification → response in `backend/app/services/chat_service.py` and expose `POST /api/v1/chat/answers` in `backend/app/api/routes/chat.py`; use the foundation decisions for all five outcomes, including provider timeout/unavailability, and never run normal retrieval/generation first for emergencies
+- [ ] T031 [US1] Build the accessible student chat form, session-only state and all outcome rendering in `frontend/src/features/chat/StudentChat.tsx`, `frontend/src/features/chat/chatState.ts`, and `frontend/src/styles/accessibility.css`; use memory/session storage only, clear at session end, display descriptive citations/context and prominent emergency contacts, and provide labels, visible focus, keyboard access, contrast and live announcements
+- [ ] T032 [US1] Document and exercise local database population in `README.md`: environment/model configuration, supported document formats, Docker Compose build/start, Alembic upgrade, mounted approved manifest, the ingestion/rebuild command, test-only seeding versus live approval, corpus/index inspection and representative retrieval/citation checks; run T018–T020 against the real PostgreSQL fixture corpus
+
+**Checkpoint**: The complete RAG workflow works from approved input through verified student response. Shared safety/context gates remain enabled. This is the internal MVP validation point; complete remaining story and release acceptance checks before student launch.
+
+## Phase 4: User Story 2 — Get Campus- and Program-Relevant Guidance (P2)
+
+**Goal**: Ask focused follow-ups only when missing campus/program/course/term changes the answer, then give appropriately scoped guidance.
+
+**Independent test**: Ask a campus-dependent question without campus, then with Hammond/Westville and program context. Verify the focused prompt and matching official catalog/prerequisite guidance, including current versus past academic terms.
+
+### Tests
+
+- [ ] T033 [P] [US2] Add material-context and `needs_context` contract tests in `backend/tests/unit/test_context.py` and `backend/tests/contract/test_context.py`; require non-empty requiredFields limited to campus/program/course/academicTerm and ensure irrelevant context is not requested
+- [ ] T034 [P] [US2] Add end-to-end campus, program prerequisite and academic-term follow-up tests in `frontend/tests/e2e/context-guidance.spec.ts`, verifying a cited answer only after necessary context is supplied
+
+### Implementation
+
+- [ ] T035 [US2] Complete context-dependent catalog/prerequisite handling in `backend/app/services/decisions.py` and `backend/app/services/retrieval.py` using the representative campus/program/course/term cases; never present an inactive or unspecified-term deadline as current
+- [ ] T036 [US2] Complete focused follow-up submission and applied-context labels in `frontend/src/features/chat/StudentChat.tsx` and `frontend/src/features/chat/chatState.ts`; retain context only for the session and preserve keyboard focus/live announcements
+- [ ] T037 [US2] Run T033–T034 and the US1 regression tests, recording campus/program/term acceptance results in `specs/001-pnw-student-chatbot/validation-results.md`
+
+**Checkpoint**: Context guidance is independently verified without weakening the grounded-answer or safety paths.
+
+## Phase 5: User Story 3 — Receive a Safe Referral (P3)
+
+**Goal**: Verify safe outcomes for unsupported/personal/conflicting questions and provide authorized reviewers with practical source governance tools.
+
+**Independent test**: Submit unsupported, ambiguous, account-specific, unreadable, conflicting and imminent-danger messages. Verify explicit limitations, correct official referrals or immediate emergency contacts. Retire/supersede a cited source and confirm new answers stop using it within one hour.
+
+### Tests
+
+- [ ] T038 [P] [US3] Add safe-outcome and reviewer list/create/status contract tests in `backend/tests/contract/test_safety_and_review.py`, plus failure/retirement integration tests in `backend/tests/integration/test_safety_and_retirement.py`; cover AI timeout/unavailability, malformed output, 401/403/409, non-empty review reasons, revision approval/conflicts, and 100% exclusion from new answers within one hour after retirement or supersession, including in-flight generation and repeat imports
+- [ ] T039 [P] [US3] Add end-to-end referral/unresolved/emergency and reviewer tests in `frontend/tests/e2e/safety-and-review.spec.ts`; verify appropriate contacts, no individual determinations, keyboard behavior, and emergency responses without normal retrieval/generation
+
+### Implementation
+
+- [ ] T040 [US3] Expose authorized reviewer GET/POST `/api/v1/reviewer/sources` and PATCH `/api/v1/reviewer/sources/{sourceId}/status` in `backend/app/api/routes/reviewer_sources.py` and `backend/app/api/schemas/reviewer.py`; reuse foundation governance, return the documented status codes/source fields, and expose effective context, revision history, conflicts and audit data needed by the reviewer UI in accordance with `specs/001-pnw-student-chatbot/contracts/api.md`
+- [ ] T041 [US3] Build a simple reviewer page with PNW OIDC sign-in, source draft creation, status actions and revision/history display in `frontend/src/features/reviewer/ReviewerSources.tsx` and `frontend/src/app/routes.tsx`; keep approval/retirement with the owning office and escalated conflict resolution with Dean of Students
+- [ ] T042 [US3] Complete referral directory selection and unresolved/emergency presentation across representative topics in `backend/app/services/decisions.py` and `frontend/src/features/chat/StudentChat.tsx`; require active appropriate official contact URLs, transparent limitations, and published PNW safety contacts, without generating decisions about personal records
+- [ ] T043 [US3] Run T038–T039 and all story regressions, exercise pending-revision approval → ingestion → activation → retirement using the CLI/reviewer UI, and record source-governance, safe-failure and retirement timing evidence in `specs/001-pnw-student-chatbot/validation-results.md`
+
+**Checkpoint**: All three stories and the complete source lifecycle are independently verified on the shared implementation.
+
+## Phase 6: Release Validation and Documentation
+
+**Purpose**: Verify every specification success criterion with practical tests and recorded human review.
+
+- [ ] T044 [P] Add a review dataset in `backend/tests/fixtures/acceptance_questions.json` and runner in `backend/tests/acceptance/test_review_set.py`: at least 100 supported questions with 100% relevant approved citations and source/context agreement (SC-001/002), at least 30 unsupported/conflicting/account-specific questions with 100% limitations/appropriate referrals (SC-003), at least 90% campus-correct answers/follow-ups (SC-006), and 100% immediate emergency guidance/PNW contacts across danger/self-harm/violence indicators (SC-011); include source-backed human review of actual generated answers
+- [ ] T045 [P] Add privacy/security tests in `backend/tests/integration/test_privacy_security.py` and `frontend/tests/e2e/session-privacy.spec.ts`: no question/student identity/prompt/transcript in DB or normal logs, 100% identifiable conversations unavailable after session end (SC-009), public student access, OIDC office boundaries, CORS/rate limits, no-store, privacy-safe errors, HTTPS source URLs and secret/dependency/image checks
+- [ ] T046 [P] Add axe-core/keyboard/focus/live-region tests in `frontend/tests/a11y/chat.a11y.spec.ts` and conduct manual screen-reader/contrast/WCAG 2.2 AA review, recording results in `specs/001-pnw-student-chatbot/accessibility-review.md`; both automated and manual checks must pass before launch (SC-008)
+- [ ] T047 [P] Add and run a representative supported-question load test in `backend/tests/performance/test_chat_latency.py` with the configured provider under normal service; require at least 95% within 10 seconds (SC-010), record measurements, and only if necessary add/validate a compatible cosine HNSW index in `backend/alembic/versions/0002_vector_index.py` without weakening eligibility or retrieval quality
+- [ ] T048 [P] Conduct student usability validation and record only anonymized aggregate findings in `specs/001-pnw-student-chatbot/usability-review.md`; at least 85% must find a source-backed answer/referral within three minutes without independent webpage navigation (SC-004), and at least 80% must rate clarity/source usefulness satisfactory or better (SC-005)
+- [ ] T049 Finalize setup, source approval/import/update/rebuild, supported formats, failure recovery and test instructions in `README.md` and `specs/001-pnw-student-chatbot/quickstart.md`; run the documented Docker Compose pytest/Vitest/Playwright/accessibility commands and record actual results, acceptance/latency measurements and remaining blockers in `specs/001-pnw-student-chatbot/validation-results.md`
+- [ ] T050 Review implementation, tests and evidence against every FR/SC and constitution principle in `specs/001-pnw-student-chatbot/review.md`; record traceability, security/privacy/documentation impact and any explicitly approved exceptions, and leave failed or unperformed checks incomplete rather than claiming launch readiness
+
+## Dependencies and Parallel Work
+
+The default is the listed order: **Setup → Foundation → US1 (P1) → US2 (P2) → US3 (P3) → Release checks**. No task requires a later task to implement its behavior. Story tests are authored first and pass at their story checkpoint. Each story is independently testable on the preceding shared implementation.
+
+- **Setup**: T001 first; T002–T004 may run together, then T005.
+- **Foundation**: T006–T010 establish schema/fixtures; author T011, implement T012–T017, and pass foundation tests. Models precede the single owning schema migration, avoiding duplicate migrations. Governance services are available to ingestion before the reviewer HTTP/UI tasks.
+- **US1**: After Foundation, author T018–T020 concurrently in separate files. Implement T021–T027 in order, then T028–T031 and verify/document in T032. Approval remains a human owning-office action: initial local validation uses explicitly test-only fixtures; live ingestion requires recorded approval.
+- **US2**: After US1, T033 and T034 can be authored concurrently; T035–T037 then proceed in order. They complete and validate the shared context behavior rather than introducing a second classifier.
+- **US3**: After US2, T038 and T039 can be authored concurrently; T040–T043 proceed in order. They expose existing governance and validate existing safety behavior rather than introducing duplicate services.
+- **Release**: T044–T048 can run in parallel after the story checkpoints, using separate result files or in-memory test reports. T049 consolidates results and documentation; T050 reviews them last. Do not overlap tasks editing the same shared service, UI or results document.
+
+`[P]` means different files and no unfinished prerequisites within that group. It permits parallel work; it does not require multiple agents or extra infrastructure.
+
+## RAG Workflow and Requirement Coverage
+
+```text
+Approved PNW sources → validate source/revision approval → extract text
+→ clean/normalize → chunk → generate embeddings
+→ PostgreSQL/pgvector: source history + chunks + metadata + citations + vectors
+→ approved/active/effective/context filtering before vector/full-text ranking
+→ grounded AI generation → verify support/citations and recheck eligibility
+→ student response (or focused follow-up / safe referral / unresolved / emergency)
+```
+
+| Requirements | Implementation and validation |
+|---|---|
+| FR-001–FR-004, FR-009 | Foundation approval rules; T018–T032 complete ingestion, grounded answers and official citations; T044 review set |
+| FR-005, SC-007 | T013–T014 lifecycle/eligibility, T026 refresh, T038/T043 retirement/supersession tests: all new answers exclude affected material within one hour |
+| FR-006–FR-007, FR-011 | T016 material-context gates, T023/T028 scope metadata/filtering, T033–T037 contextual catalog guidance, T044 campus threshold |
+| FR-008, FR-010, FR-012, FR-016 | T015–T016/T030 safe outcomes, T038–T043 failure/emergency/referral checks, T044 safety thresholds |
+| FR-003, FR-013 | T007–T014 reviewed source history/office roles/audit, T040–T043 reviewer interface and lifecycle |
+| FR-014–FR-015 | T012/T031 accessible session-only UX, T045 privacy, T046 automated/manual WCAG 2.2 AA |
+| SC-001–SC-003, SC-006, SC-011 | T044 numerical review-set and safety acceptance |
+| SC-004–SC-005, SC-008–SC-010 | T045–T048 retention, accessibility, performance and student usability |
+| Constitution I–VIII | Approved requirements, small tested increments, simple architecture, reproducible setup, grounding/fail-safe gates, and T049–T050 evidence/review; resolve material ambiguity with humans before affected implementation |
+
+## Implementation Strategy
+
+Deliver an internal MVP after Foundation and US1: a reproducibly ingested corpus, verified grounded answers, and mandatory context/safety gates. Complete US2 and US3 validation and reviewer tools next. Launch only after the full release checks, including human accessibility/usability review, pass or a permitted exception is explicitly approved under the constitution. Keep ordinary tests offline with fixtures; do not substitute mocked results for actual provider performance, source-grounding review or human usability evidence.

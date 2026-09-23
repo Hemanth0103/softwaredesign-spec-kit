@@ -1,0 +1,42 @@
+# Repository metadata and local tooling
+.git
+.agents
+.codex
+.specify
+# Docker reads these instructions itself; do not copy them into application layers.
+**/Dockerfile*
+.dockerignore
+**/.DS_Store
+**/Thumbs.db
+**/.vscode
+**/.idea
+
+# Secrets must never enter the build context
+**/.env
+**/.env.*
+**/secrets
+**/*.key
+**/*.pem
+
+# Dependencies, caches and generated output
+**/node_modules
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/.vite
+**/*.tsbuildinfo
+**/dist
+**/build
+**/.coverage*
+**/htmlcov
+**/coverage
+**/playwright-report
+**/test-results
+**/*.log
+**/*.tmp
+**/*.swp

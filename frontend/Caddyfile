@@ -1,0 +1,18 @@
+# Local Compose supplies :8080 (plain HTTP on your computer).
+# The deployment override supplies a real domain; Caddy then manages HTTPS.
+{$SITE_ADDRESS:localhost} {
+	# /api is passed through unchanged: /api/health reaches /api/health.
+	# Using handle_path here would remove /api and break the API's routes.
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	# All other addresses belong to React. Its index page handles browser routes.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+	# Access logging is deliberately not enabled: URLs may contain user input.
+}

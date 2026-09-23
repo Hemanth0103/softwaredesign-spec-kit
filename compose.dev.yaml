@@ -1,0 +1,17 @@
+# Add to the base file with: docker compose -f compose.yaml -f compose.dev.yaml up --build
+# Compose 2.24.4+ supports !override (replace the list instead of adding to it).
+services:
+  api:
+    build:
+      target: development
+    volumes:
+      - ./backend/app:/app/app:ro
+  web:
+    build:
+      target: development
+    environment:
+      API_PROXY_TARGET: http://api:8000
+    ports: !override ["127.0.0.1:5173:5173"]
+    volumes: !override
+      - ./frontend/src:/app/src:ro
+      - ./frontend/index.html:/app/index.html:ro

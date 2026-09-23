@@ -1,0 +1,41 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+
+# Python environments, caches and packaging
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Frontend dependencies and generated output
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Test and coverage output
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+playwright-report/
+test-results/
+
+# Local logs, editor and OS files
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

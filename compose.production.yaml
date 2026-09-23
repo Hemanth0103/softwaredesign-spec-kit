@@ -1,0 +1,16 @@
+# Deployment example: use INSTEAD of dev/test overrides, on an internet-facing host.
+# Requires DNS for PUBLIC_DOMAIN to point at that host and ports 80/443 reachable.
+# This config provides TLS; later feature/security tasks are still required to launch.
+services:
+  web:
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN to your real hostname}
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+  api:
+    restart: unless-stopped
+  db:
+    restart: unless-stopped
