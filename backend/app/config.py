@@ -3,6 +3,7 @@
 import json
 import os
 from collections.abc import Mapping
+from ipaddress import ip_network
 from typing import Annotated, Self
 from urllib.parse import urlsplit
 
@@ -43,8 +44,49 @@ class Settings(BaseModel):
     source_timeout_seconds: Timeout = 10.0
     oidc_timeout_seconds: Timeout = 3.0
     oidc_issuer: NonEmpty
+    oidc_jwks_url: str | None = None
+    oidc_roles_claim: NonEmpty = "roles"
+    oidc_office_roles: dict[str, str] = Field(default_factory=dict)
     oidc_audience: NonEmpty
+
+    @field_validator("oidc_jwks_url")
+    @classmethod
+    def validate_jwks(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        url = urlsplit(value)
+        if (
+            url.scheme != "https"
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.fragment
+            or url.query
+        ):
+            raise ValueError("JWKS requires an HTTPS URL without credentials or query")
+        return value
+
+    @field_validator("oidc_office_roles")
+    @classmethod
+    def validate_roles(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not role.strip() or not office.strip() for role, office in value.items()):
+            raise ValueError("Role and office names must be non-empty")
+        return value
+
     cors_origins: list[str] = Field(default_factory=list)
+    trusted_proxy_networks: list[str] = Field(default_factory=list)
+    require_https: bool = False
+    rate_limit_requests: Annotated[int, Field(gt=0)] = 120
+    rate_limit_window_seconds: Timeout = 60.0
+
+    @field_validator("trusted_proxy_networks")
+    @classmethod
+    def validate_proxy_networks(cls, values: list[str]) -> list[str]:
+        for value in values:
+            network = ip_network(value)
+            if network.prefixlen == 0:
+                raise ValueError("Trust must be limited to explicit proxy addresses or subnets")
+        return values
 
     @field_validator("database_url")
     @classmethod
@@ -114,11 +156,12 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     values: dict[str, object] = {
         name: source[name.upper()] for name in Settings.model_fields if name.upper() in source
     }
-    if "cors_origins" in values:
-        try:
-            values["cors_origins"] = json.loads(source["CORS_ORIGINS"])
-        except ValueError:
-            raise ConfigurationError("Invalid configuration: CORS_ORIGINS") from None
+    for field in ("cors_origins", "trusted_proxy_networks", "oidc_office_roles"):
+        if field in values:
+            try:
+                values[field] = json.loads(source[field.upper()])
+            except ValueError:
+                raise ConfigurationError("Invalid configuration: " + field.upper()) from None
     try:
         return Settings.model_validate(values)
     except ValidationError as error:

@@ -8,6 +8,12 @@
 		reverse_proxy api:8000
 	}
 
+	handle /runtime-config.json {
+		root * /srv
+		header Cache-Control "no-store"
+		file_server
+	}
+
 	# All other addresses belong to React. Its index page handles browser routes.
 	handle {
 		root * /srv

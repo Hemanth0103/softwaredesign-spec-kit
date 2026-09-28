@@ -1,10 +1,11 @@
-"""T005 startup probe; student/reviewer routes and middleware arrive in later tasks."""
+"""Public API foundation; student/reviewer feature routes arrive in later tasks."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.middleware import configure_middleware
 from app.config import load_settings
 
 
@@ -17,6 +18,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+configure_middleware(app)
 
 
 @app.get("/api/health")

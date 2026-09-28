@@ -84,3 +84,20 @@ def test_errors_do_not_expose_values(environment: dict[str, str]) -> None:
 
 def test_default_cors_denies_cross_origin(environment: dict[str, str]) -> None:
     assert load_settings(environment).cors_origins == []
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("RATE_LIMIT_REQUESTS", "0"),
+        ("RATE_LIMIT_WINDOW_SECONDS", "0"),
+        ("TRUSTED_PROXY_NETWORKS", '["0.0.0.0/0"]'),
+        ("TRUSTED_PROXY_NETWORKS", '["::/0"]'),
+        ("TRUSTED_PROXY_NETWORKS", "not-json"),
+        ("TRUSTED_PROXY_NETWORKS", '["*"]'),
+    ],
+)
+def test_invalid_api_settings(environment, key, value):
+    environment[key] = value
+    with pytest.raises(ConfigurationError):
+        load_settings(environment)

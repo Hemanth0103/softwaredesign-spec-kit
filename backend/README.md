@@ -15,8 +15,7 @@ pins both sets, including transitive dependencies and distribution hashes, with
 platform markers for local development and the future Linux Docker image.
 Psycopg's binary extra supplies the PostgreSQL driver without a local libpq build.
 HTTPX supports FastAPI's test client. Ruff provides linting/formatting; mypy checks
-types. T005 adds only the `/api/health` startup probe; application routes and
-database sessions remain later tasks. For containers, see the
+types. T005 adds only the `/api/health` startup probe; application routes remain later tasks. T006 provides database sessions and Alembic. For containers, see the
 [beginner's Docker guide](../docs/docker.md).
 
 From the activated environment:
@@ -51,3 +50,399 @@ uv pip check --python .venv/bin/python
 Existing pins are retained when possible. Add `--upgrade-package PACKAGE` to the
 compile command for an intentional package upgrade. Commit the manifest and lock
 changes together. Keep `.venv/` and secrets untracked.
+
+## Database infrastructure (T006)
+
+Create an engine at application/CLI startup with
+`create_db_engine(settings.database_url.get_secret_value(), settings.database_timeout_seconds)`
+from `app.db.session`, then call `create_session_factory(engine)`. Use
+`with session_scope(factory) as session:` for a transaction that commits on success,
+rolls back on failure, and always closes. Dispose the engine at shutdown. Imports
+open no connections. Engines enforce UTC, connection/statement timeouts, and hide
+SQL parameter values. Do not log database URLs or connection exceptions containing secrets.
+
+Models inherit `Base` and opt into `UUIDMixin` and `TimestampMixin` from
+`app.db.base`. UUIDs and aware UTC timestamps are assigned at insert/flush;
+`updated_at` advances on SQLAlchemy updates. Direct SQL updates must explicitly
+set `updated_at`. Append-only records should declare only their own event timestamp.
+
+With `DATABASE_URL` (and optionally `DATABASE_TIMEOUT_SECONDS`) injected into the
+process, run from `backend/`:
+
+```sh
+alembic upgrade head
+alembic current
+alembic upgrade head --sql
+```
+
+Migrations do not require AI or OIDC settings. From the repository root,
+`docker compose run --build --rm migrate` uses the same configuration against
+both fresh and existing database volumes; retain the volume when upgrading.
+Alembic records applied revisions and repeated upgrades apply only pending work.
+T006 has no application schema revisions: T007–T009 add model imports to
+`alembic/env.py` and the initial schema revision. Never use `create_all` or stamp
+an existing schema as a substitute for reviewed migrations.
+
+Validation (2026-09-27): all 28 backend tests passed in the Docker test image
+against PostgreSQL 17.11 / pgvector 0.8.6 (Docker Engine 29.8.0). Ruff lint/format
+and mypy passed. The isolated PostgreSQL volume passed fresh migration, repeated
+upgrade, UUID/UTC round-trip, timeout configuration, commit/rollback, and persisted
+row checks after a database restart. The shipped migration entrypoint also passed
+twice on a separate empty database (T006 has no domain revisions yet).
+
+The opt-in PostgreSQL test generates a temporary probe revision. Run it only against
+a dedicated disposable validation database, never the application database:
+
+```sh
+T006_TEST_DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST/TEST_DB \
+  pytest tests/integration/test_postgres.py
+```
+
+Restart that database without deleting its volume, then repeat with
+`T006_EXPECT_PERSISTED=1` to require the previous row before rerunning migrations.
+The test intentionally retains its probe table and Alembic version for this check.
+Without `T006_TEST_DATABASE_URL`, the test skips. SQLite migration tests and offline
+PostgreSQL SQL generation (including percent-encoded credentials) remain available
+without Docker.
+
+
+## Source and revision models (T007)
+
+`app.models.source` defines `ApprovedSource` and `SourceRevision`, registered with
+Alembic metadata. Sources have unique HTTPS URLs, office/subject metadata, default
+`draft` approval and `active` lifecycle. Revisions retain source relationships,
+SHA-256 hashes, aware UTC retrieval/effective timestamps, campus, and optional
+program/course/academic-term scope. Effective date windows must be ordered.
+
+New revisions start `pending_review`; assign `status` through `approved` →
+`active` → `superseded` or `retired`. Terminal revisions cannot reactivate.
+ORM assignments reject hash changes and invalid transitions, including after
+reloading a record. Use ORM instance writes for these operations: bulk/direct SQL
+bypasses Python validators. Database constraints cover required fields, source URL
+uniqueness, status/campus values and effective windows. Reviewer authorization and
+atomic activation/supersession belong to T013; the deployed schema migration
+remains T009. No new dependencies were needed.
+
+T007 validation: 48 tests passed in the Docker test image with PostgreSQL enabled;
+Ruff and mypy passed. Source model tests use isolated PostgreSQL schemas and remove
+them afterward. Run `pytest tests/unit/test_source_models.py`; supply the dedicated
+`T006_TEST_DATABASE_URL` above to also execute its PostgreSQL cases.
+
+
+## Chunks and review events (T008)
+
+`SourceChunk` stores revision-linked text, zero-based ordinal, optional heading,
+table context and citation anchor, PostgreSQL `tsvector`, pgvector embedding, and
+embedding model/version/dimension. Vector dimensions are checked against each row;
+non-finite embeddings are rejected. Ingestion must supply the populated search
+vector before insertion (T025); the empty default is not searchable content.
+
+`SourceReviewEvent` stores source and optional revision IDs, reviewer OIDC subject,
+action, non-empty reason, and UTC timestamp. Revision-level events must reference
+the specified source. Inserting an event does not authorize an action: T013 will
+enforce source-owning office permissions and Dean of Students conflict resolution.
+
+Both models reject ORM updates and deletes after insertion. Use new records for
+rebuilds and subsequent review actions. These model guards do not intercept direct
+SQL or bulk DML; use ORM instance writes. Alembic registers both models; schema
+migration and indexes remain T009. The SQLite session smoke test creates only its
+own test table because the new models require PostgreSQL-native types.
+
+Validation: all 58 tests passed in Docker against PostgreSQL/pgvector, including
+vector distance/full-text round trips, immutable/append-only guards, dimension
+mismatch, invalid review fields, and mismatched source/revision rejection. Ruff
+lint/format and mypy passed. No new dependencies were required: SQLAlchemy,
+Psycopg and pgvector were already installed from the pinned lockfile.
+
+Run the focused checks against the dedicated validation database:
+
+```sh
+T006_TEST_DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST/TEST_DB \
+  pytest tests/integration/test_chunk_review_models.py
+```
+
+
+## Initial schema and referrals (T009)
+
+T009 now supplies `alembic/versions/0001_initial.py`; earlier notes saying that
+schema deployment is pending describe the state at T006–T008. The migration
+creates sources, revisions, chunks, review events, and referral directory entries.
+It enables pgvector with `CREATE EXTENSION IF NOT EXISTS`, including on existing
+volumes whose initialization scripts have already run. No approval data is seeded.
+
+Referrals contain UUID, topic, office, optional HTTPS URL/phone/email (at least
+one required), campus (`hammond`, `westville`, or `all`), active flag and UTC
+timestamps. Models and migration include source URL uniqueness, revision
+source/hash uniqueness, chunk revision/ordinal/model/version uniqueness, foreign
+keys, full-text GIN and B-tree eligibility/scope/contact indexes. Vector search
+remains exact; no HNSW or IVFFlat index is created. All timestamp columns use
+PostgreSQL timezone-aware types, with application connections configured for UTC.
+
+From the repository root with runtime environment configured:
+
+```sh
+docker compose run --build --rm migrate
+```
+
+Or from `backend/` with `DATABASE_URL` injected: `alembic upgrade head` and
+`alembic current`. Repeat upgrades are safe. The database role must be able to
+create the vector extension on first deployment. A downgrade to `base` removes
+the application's tables and data; it intentionally retains the shared extension.
+Existing databases created by ad hoc `create_all` calls or test probe revisions
+are not automatically adopted or stamped; use a clean application database.
+
+Validation: 65 backend tests passed in Docker/PostgreSQL, with no skipped tests.
+The initial migration test creates a disposable database, checks extension
+creation, exact model/schema agreement, indexes, constraints, preserved referral
+data on repeat upgrade, downgrade and re-upgrade. The packaged migration
+entrypoint also passed twice on the retained test volume, and `0001_initial`
+plus all five tables survived PostgreSQL restart. Ruff lint/format and mypy passed.
+No new dependencies were needed.
+
+Run the focused migration test with a dedicated test connection whose role has
+`CREATEDB`: `T006_TEST_DATABASE_URL=... pytest tests/integration/test_initial_schema.py`.
+It removes only its uniquely named disposable database when finished. The older
+T006 infrastructure tests use isolated temporary revision directories so their
+probe migrations remain separate from the real application migration graph.
+
+
+## Shared offline fixtures (T010)
+
+See [the fixture guide](tests/fixtures/README.md) for provenance and usage. The
+corpus contains three official PNW downloads and four labeled synthetic documents,
+16 lifecycle/context/safety scenarios, and five sourced referral/emergency contacts.
+The loader verifies SHA-256 snapshots, validates the manifest and permits only
+explicit local/test use. Test approvals are synthetic and never live authorization.
+Pytest exposes fresh `corpus`, fixed `corpus_clock`, and fake `test_environment`
+fixtures without network calls or automatic database seeding.
+
+Frontend Vitest now loads `tests/setup.ts` for DOM cleanup, storage clearing, timer
+restoration and global/environment stub cleanup between tests. Validation passed:
+72 backend tests in Docker/PostgreSQL, three frontend tests, Python Ruff/mypy and
+frontend lint/typecheck. No new dependencies were needed.
+
+
+## Foundation tests (T011)
+
+The three T011 test files are authored; their upcoming Python interfaces and
+requirement coverage are documented in [foundation-tests.md](tests/foundation-tests.md).
+The focused suite currently has 4 passing tests, 63 failures and 4 setup errors
+because T012–T016 services/schemas/middleware do not exist yet. All failures were
+checked to be missing-module errors. They remain visible and must pass at the
+foundation checkpoint. The prior 72-test suite still passes in Docker/PostgreSQL.
+No production behavior or later-task implementation was added for T011.
+
+
+## API foundation (T012)
+
+`app.api.middleware.configure_middleware` installs exact-origin CORS, generic JSON
+HTTP/validation/server errors, chat `Cache-Control: no-store`, and an anonymous
+fixed-window rate budget. The public `/api/health` endpoint remains available;
+student/reviewer routes remain later tasks. Validation errors return 400 without
+input values. Unhandled exceptions return a generic 500 without forwarding the
+exception to server logging. Middleware reads no request bodies and retains only
+aggregate request/response counts, never student identities, IP histories, prompts
+or transcripts. Keep Uvicorn access logging disabled as in the Docker commands.
+
+Runtime options (also in `.env.example`):
+
+- `CORS_ORIGINS`: JSON array of exact allowed origins; default empty.
+- `RATE_LIMIT_REQUESTS`: positive requests per process/window, default 120.
+- `RATE_LIMIT_WINDOW_SECONDS`: positive window length, default 60 seconds.
+- `TRUSTED_PROXY_NETWORKS`: JSON array of explicit proxy IPs/CIDRs, default empty;
+  wildcard and universal networks are rejected.
+- `REQUIRE_HTTPS`: default false for local development; enable for TLS deployment.
+
+For TLS termination, configure the actual reverse-proxy peer address/subnet and
+set `REQUIRE_HTTPS=true`. Only a trusted peer's single `X-Forwarded-Proto` value
+(`http` or `https`) affects the request scheme. Other forwarding headers are
+stripped; keep Uvicorn `--no-proxy-headers` so it cannot override this boundary.
+Insecure API requests are rejected rather than redirected with user input.
+`/api/health` is exempt so private HTTP health checks still work. CORS preflight is
+handled separately and does not consume the API budget.
+
+The rate budget is shared by all users within one process; it is intentionally
+not a per-user/IP or cluster-wide quota. Multiple workers each have their own
+budget. Configure deployment capacity accordingly. Limits return generic 429 JSON
+with `Retry-After`; normal/error/preflight chat responses all carry `no-store`.
+Only aggregate status-class counters are retained in middleware memory.
+
+Validation: Docker/PostgreSQL full-suite run had **90 passed, 63 failed**. The
+remaining failures are T011 tests for the unimplemented T013–T016 services/schemas;
+the four T011 middleware tests now pass. New tests cover exact CORS, validation
+redaction, rate-limit enforcement/reset, health exemption, proxy spoofing, trusted
+HTTPS and invalid settings. Ruff lint/format and mypy pass. No new dependencies
+were required. Run focused tests with `pytest tests/unit/test_middleware.py`, plus
+`pytest tests/contract/test_api_rules.py -k "not question and not outcomes"`.
+
+
+## Reviewer authentication and governance (T013)
+
+`app.auth.OIDCValidator` verifies RS256 signatures using only the deployment's
+`OIDC_JWKS_URL`; it never follows token-supplied key URLs or HTTP redirects.
+Verification requires issuer, API audience, subject, issued-at and expiration,
+and checks not-before when present. JWKS fetches use the configured OIDC timeout
+and a 256 KiB body limit. Keys are fetched on each verification to observe rotation;
+there is no stale-key fallback. Tokens and claims are not logged or cached.
+
+Configure the actual PNW provider's HTTPS JWKS endpoint, `OIDC_ISSUER`, and the
+resource/API `OIDC_AUDIENCE` (not an interactive client's ID-token audience).
+`OIDC_ROLES_CLAIM` defaults to `roles`, a list of strings. `OIDC_OFFICE_ROLES` is a
+JSON mapping of provider-managed role values to exact source-owning office names,
+for example `{"registrar-role":"Registrar","dean-role":"Dean of Students"}`.
+The actual role identifiers must come from the deployment administrator; the
+example grants no authority by itself. Missing JWKS configuration rejects tokens;
+empty/unmapped roles grant no reviewer access. The synchronous FastAPI dependency
+`require_reviewer` returns 401 for invalid credentials and 403 for no mapped office.
+It is ready for the reviewer routes in T040; this task does not expose those routes.
+
+Use `create_draft` and `review_source` inside the caller's transaction/session scope.
+Creation always produces a draft without approval. Owning offices approve sources,
+approve pending revisions, activate revisions, supersede or retire evidence.
+Activation supersedes prior active revisions and records each change. Source row
+locks serialize governance actions; savepoints ensure state changes and audit writes
+succeed together. The service does not commit the caller's transaction. Reasons
+must be non-empty, unauthorized actions cannot write audit entries, and terminal
+sources/revisions cannot reactivate.
+
+For `resolve_conflict`, only Dean of Students is allowed; the caller must select
+the losing active revision to retire and supply the resolution reason. This does
+not approve new content or resurrect retired evidence. Resolution of multiple
+conflicting sources can call this operation for each losing revision in one caller
+transaction. Detection/exclusion of conflicting evidence remains T014. Review
+subjects are retained only in the required audit records, not ordinary logs.
+
+Dependencies: added and installed PyJWT 2.15.0 with cryptography 50.0.1 (plus pinned
+cffi/pycparser); moved existing HTTPX to runtime dependencies for JWKS access.
+The hash-locked Docker install and local dependency compatibility check passed.
+Validation: full Docker/PostgreSQL suite **118 passed, 54 failed**; remaining
+failures are the not-yet-implemented T014–T016 modules. T013 tests cover signed
+claims, bad signatures/algorithms, expiration, issuer/audience, role shape, unknown
+roles, JWKS failure/rotation, office/Dean permissions, draft/approval/activation,
+audit history and atomic rollback. Ruff lint/format and mypy passed. Authentication
+was tested with generated RSA keys and a deterministic HTTP transport, not a live
+PNW tenant whose deployment settings have not been provided.
+
+
+## Shared source eligibility (T014)
+
+`app.services.source_eligibility` supplies the pure `is_eligible` predicate,
+`eligible_revisions` SQL query and `recheck_revisions` final database gate. Eligibility
+requires approved/active sources, active readable revisions, no unresolved group,
+valid effective dates and matching material scope. Effective intervals include the
+start and exclude the end. Campus `all` and absent program/course/term scopes are
+unrestricted; a scoped value requires matching context. Missing or naive timestamp
+inputs fail closed. No retrieval cache or scheduler is introduced.
+
+Migration `0002_eligibility` adds `readable` (default false), indexed `conflict_group`
+and the `unresolved` revision status. Existing revisions remain in place but must
+be validated readable by later extraction before use. Upgrade with
+`docker compose run --build --rm migrate`. Downgrading this revision retires unresolved
+revisions before removing their conflict metadata; it never reactivates them.
+
+When ingestion/retrieval identifies conflicting active evidence, call
+`mark_conflicting(session, revision_ids)` and commit. It atomically marks all
+participants unresolved under a persistent group. This records a detected conflict;
+it does not attempt to infer semantic contradictions from arbitrary text.
+Ordinary review actions cannot clear groups or activate replacements around them.
+`resolve_conflict_group` requires a verified Dean of Students reviewer and non-empty
+reason, restores at most one still-approved/readable revision and retires the other
+participants, appending an audit for each. It cannot revive a retired source.
+The earlier T013 single-revision operation does not resolve a T014 group.
+
+Later ingestion and answer services must call `recheck_revisions(factory, ids,
+context=...)` immediately before publication/return and reject false results.
+It uses a new database session/transaction, so stale ORM objects or earlier retrieval
+results cannot hide a committed retirement/supersession. Do not substitute an old
+transaction or cache. The check observes commits as of its database read; HTTP
+sending cannot be atomic with a subsequent database commit. Integration into those
+later pipelines remains their own tasks; no student answer endpoint is added here.
+
+Validation: **141 passed, 35 failed** in the full Docker/PostgreSQL suite; remaining
+failures are unimplemented T015–T016 tests. T014 covers corpus eligibility, material
+scope mismatches, date/readability filtering, stale-reader retirement, persistent
+conflicts, Dean-only resolution and prevention of retired-source restoration.
+Migration validation covers existing rows, repeat upgrades, model/schema agreement,
+downgrade/re-upgrade; the retained test volume reached `0002_eligibility` successfully.
+Ruff lint/format and mypy passed. All needed dependencies were already installed.
+
+
+## Chat contract schemas (T015)
+
+`app.api.schemas.chat` defines strict `StudentQuestion`, `QuestionContext`,
+`Citation`, `Contact` and the five distinct outcome models. `ChatResponse` is a
+Pydantic discriminated union keyed by `outcome`. Unknown fields and incorrect
+scalar types are rejected. Questions preserve their input and enforce 1–4,000
+characters; context lengths are 160/32/80 for program/course/academicTerm, with
+campus restricted to Hammond/Westville enum values. Optional context may be omitted
+or null. Response text must contain a non-whitespace character; citations,
+requiredFields and emergency contacts must be non-empty in their respective outcomes.
+
+Python attributes use snake_case while validation/serialization use the contract's
+camelCase aliases (`academicTerm`, `contextLabel`, `officeName`, `contactUrl`,
+`appliedContext`, `requiredFields`). Use `model_dump(exclude_none=True)` or future
+FastAPI routes with `response_model_exclude_none=True` to omit absent optional data.
+Links must be HTTPS without embedded credentials. Source approval, domain authority,
+relevance and grounding remain the later eligibility/citation checks; schema
+validation alone does not establish those properties.
+
+The existing T012 middleware handles malformed JSON and schema failures as generic
+400 JSON, rate limits as 429, and invalid server outputs as generic 500. All chat
+responses remain no-store, and input/exception contents are not echoed or logged.
+The tests exercise these behaviors on test-only routes; the public student answer
+endpoint remains T030.
+
+Validation: all 41 API contract tests passed locally; the full Docker/PostgreSQL
+suite had **178 passed, 20 failed**, with only the unimplemented T016 decision-gate
+tests failing. Tests cover request boundaries/types, all five valid outcome
+round trips, missing required fields, unsafe URLs, HTTP validation, response aliases
+and private server errors. Ruff lint/format and mypy passed. Existing Pydantic and
+FastAPI dependencies suffice; no new packages were needed.
+
+
+## Shared safety and context gates (T016)
+
+`app.services.decisions.evaluate_gates` runs emergency → personal-record referral
+→ material missing context → evidence/provider failure checks. It returns a
+schema-validated safe outcome or `None` to permit the next processing stage.
+It never generates policy text, retrieves evidence, contacts a provider, logs
+questions, or stores conversation data. Later orchestration must call it before
+retrieval/generation and again with evidence/provider results; `None` is not an
+approved answer and does not bypass citation verification.
+
+The caller supplies only context fields whose absence materially changes the
+answer. The gate asks one focused question for the first missing material field;
+it does not ask for irrelevant context. Explicit `emergency` and `account_specific`
+flags can raise safety requirements; false flags cannot override detected risk.
+These flags and evidence status are internal application inputs, not public request
+fields. English text indicators are conservative deterministic heuristics, not a
+complete natural-language safety classifier. Broader acceptance testing and the
+future orchestration remain necessary before release.
+
+Personal questions about enrollment, degree, financial aid, discipline, housing,
+registration and records receive limitations plus office referrals, never an
+individual determination. Unsupported evidence and provider failure produce
+referrals; unreadable, ambiguous and conflicting evidence produce unresolved
+responses. Unknown evidence status fails closed. Conflicts refer to Dean of Students.
+
+Contact selection accepts active official PNW HTTPS directory records, prefers a
+matching campus, then campus `all`. Explicit entries for a topic override defaults,
+including inactive entries; inactive or invalid entries are never selected. An
+unavailable topic can refer to the general Dean office; if no safe general contact
+exists, `DirectoryUnavailable` lets API middleware return its generic service error.
+Emergency guidance always includes 911 even if directory data is unavailable.
+
+Default office links were verified on 2026-09-27:
+[Financial Aid](https://www.pnw.edu/financial-aid/),
+[Housing](https://www.pnw.edu/housing/),
+[Dean of Students](https://www.pnw.edu/dean-of-students/),
+[Registrar](https://www.pnw.edu/registrar/), and
+[Public Safety](https://www.pnw.edu/public-safety/).
+Public Safety's 911 and (219) 989-2222 emergency numbers are also preserved in the
+T010 official snapshot. No policy content is inferred from these contact defaults.
+
+Validation: **all 212 backend tests passed in Docker/PostgreSQL**, including all
+previously red T011 tests and 34 decision-gate cases. Tests cover emergency priority,
+record limitations, correct office selection, inactive/campus contact handling,
+focused context, evidence failures and response schema conformance. Ruff lint/format
+and mypy passed. No new dependencies were required. T017 remains incomplete.

@@ -1,8 +1,7 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { expect, test } from 'vitest';
 import App from '../../src/App';
 
-afterEach(cleanup);
 
 test('React renders through the TypeScript and DOM test setup', () => {
   render(<App />);

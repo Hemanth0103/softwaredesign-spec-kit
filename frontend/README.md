@@ -42,3 +42,25 @@ Dependencies are saved with exact versions; commit `package.json` and
 `package-lock.json` together when intentionally updating packages. Generated
 builds, reports and `node_modules/` are ignored. This application is private and
 is not published to npm. Do not put secrets in frontend code or Vite variables.
+
+## T017 API client
+
+Call `loadApiClient()` from `src/api/client.ts` when initializing the future chat
+UI, then call `client.ask(question, optionalAbortSignal)`. The client validates
+requests and all five response outcomes at runtime. Catch `ServiceError` and use
+its `code` or fixed safe `message`; server error bodies are never displayed.
+Requests use no caching, omit credentials, reject redirects, and support timeouts
+and cancellation. The client does not log or persist question content.
+
+`public/runtime-config.json` defaults to `{"apiBaseUrl":"/api","timeoutMs":12000}`.
+Configuration is fetched without caching before client creation. Deployments can
+mount a replacement JSON file at `/srv/runtime-config.json` in the Caddy container
+without rebuilding the image. Use a root-relative API path or an HTTPS URL and a
+timeout between 1 and 120000 milliseconds. This public file must contain no secrets.
+Caddy serves it with `Cache-Control: no-store`.
+
+T017 validation: 26 unit tests passed, along with lint, TypeScript checks, and
+the production build. The Docker runtime built successfully, its Caddy
+configuration validated, and the runtime JSON was present in the image. No new
+dependencies were required. Chat UI wiring and the live answers endpoint remain
+in their later implementation tasks.
