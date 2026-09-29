@@ -57,13 +57,78 @@ and the [beginner's Docker guide](../../docs/docker.md). T006 and later tasks re
 
 ### Tests
 
-- [ ] T018 [P] [US1] Add extraction/normalization/chunking/embedding unit tests in `backend/tests/unit/test_ingestion.py` and PostgreSQL pipeline tests in `backend/tests/integration/test_ingestion.py`; cover preserved metadata, unreadable/unsupported formats, all eligible chunks embedded, vector compatibility, populated tsvectors/indexes, repeat imports, failed imports, updated revisions and concurrent status changes
-- [ ] T019 [P] [US1] Add answer API contract and ingestion-to-answer tests in `backend/tests/contract/test_chat.py` and `backend/tests/integration/test_grounded_answers.py`; verify required fields, validation/errors, approved/context-compatible retrieval, source-backed claims and citations, and rejection of invented URLs, valid-but-irrelevant citations and inactive deadlines
-- [ ] T020 [P] [US1] Add student answer/session tests in `frontend/tests/unit/chat.test.tsx` and `frontend/tests/e2e/student-answer.spec.ts`, covering accessible submission, cited answers, API errors and clearing all conversation state at session end
+- [X] T018 [P] [US1] Add extraction/normalization/chunking/embedding unit tests in `backend/tests/unit/test_ingestion.py` and PostgreSQL pipeline tests in `backend/tests/integration/test_ingestion.py`; cover preserved metadata, unreadable/unsupported formats, all eligible chunks embedded, vector compatibility, populated tsvectors/indexes, repeat imports, failed imports, updated revisions and concurrent status changes
+T018 test-authoring validation (2026-09-28): 24 unit cases collect and fail as
+expected because `app.ingestion`/`app.ai` are deferred to T021–T026; 19 PostgreSQL
+pipeline cases collect but require `T006_TEST_DATABASE_URL` and a running pgvector
+database. No test failures are hidden with xfail. Passing ingestion behavior and
+real PostgreSQL execution remain required at T032. Existing backend regression:
+186 passed, 26 database-dependent cases skipped. Ruff passes for the new tests.
+Run from repository root: `backend/.venv/bin/pytest backend/tests/unit/test_ingestion.py
+backend/tests/integration/test_ingestion.py`. The test module docstrings define the
+proposed internal interfaces for subsequent implementation tasks.
+
+- [X] T019 [P] [US1] Add answer API contract and ingestion-to-answer tests in `backend/tests/contract/test_chat.py` and `backend/tests/integration/test_grounded_answers.py`; verify required fields, validation/errors, approved/context-compatible retrieval, source-backed claims and citations, and rejection of invented URLs, valid-but-irrelevant citations and inactive deadlines
+
+T019 test-authoring validation (2026-09-28): 60 cases collect across
+`backend/tests/contract/test_chat.py` and `backend/tests/integration/test_grounded_answers.py`.
+The contract run has 12 passing schema checks and 22 expected failures: the student
+answer route currently returns 404 and `app.api.routes.chat` is deferred to T030.
+The 26 PostgreSQL ingestion-to-answer cases require `T006_TEST_DATABASE_URL`; they
+were skipped because no dedicated database is configured. Test docstrings specify
+proposed internal injection interfaces for T028–T030; grounding checks use real
+ingestion/retrieval/verification with deterministic AI substitutes. No new packages
+were required. Ruff passes. Existing backend regressions excluding the deliberate
+T018/T019 red tests: 186 passed, 26 database-dependent cases skipped.
+Passing behavior and real PostgreSQL execution remain required at T032; no xfail
+masks these unfinished implementations. Run from repository root:
+`backend/.venv/bin/pytest backend/tests/contract/test_chat.py backend/tests/integration/test_grounded_answers.py`.
+
+- [X] T020 [P] [US1] Add student answer/session tests in `frontend/tests/unit/chat.test.tsx` and `frontend/tests/e2e/student-answer.spec.ts`, covering accessible submission, cited answers, API errors and clearing all conversation state at session end
+
+T020 test-authoring validation (2026-09-29): Added 13 component/session tests
+and 5 Chromium browser tests for labeled/keyboard submission, descriptive citations
+and applied context, live announcements, safe API errors/recovery, and session
+clearing (draft, answers, citations, errors, pending follow-up, all context fields,
+storage/remount/reload, and late responses). Tests render the public App and use
+controlled API responses with the real client; these do not establish backend
+grounding or full WCAG compliance. File comments document the proposed accessible
+UI contract for T031. No production code or dependencies changed.
+Type checking and ESLint pass. All 26 existing unit tests pass; the 13 new unit
+and 5 browser cases fail as expected because the T031 question form is absent.
+No failures are skipped or marked expected-failure. Passing behavior remains
+required at T032. Run from `frontend/`: `npm test`, `npm run typecheck`,
+`npm run lint`, and `npm run test:e2e -- student-answer.spec.ts` (the initial
+red browser run used `--timeout=5000`).
 
 ### Implementation
 
-- [ ] T021 [US1] Implement collection/import and source validation in `backend/app/ingestion/sources.py` using an explicit manifest of governed canonical PNW URLs or local document snapshots; check official HTTPS location, owning-office approval and revision hash before ingestion, preserve provenance, bound fetch size/time, and validate redirects; linked documents require their own approval and changed content is registered for review rather than silently trusted
+- [X] T021 [US1] Implement collection/import and source validation in `backend/app/ingestion/sources.py` using an explicit manifest of governed canonical PNW URLs or local document snapshots; check official HTTPS location, owning-office approval and revision hash before ingestion, preserve provenance, bound fetch size/time, and validate redirects; linked documents require their own approval and changed content is registered for review rather than silently trusted
+
+
+T021 validation (2026-09-29): Added governed manifest collection, bounded HTTP/local
+snapshot reads, official HTTPS/redirect validation, source/revision approval-audit
+and hash checks, provenance results, post-fetch governance rechecks, and idempotent
+pending-review registration for changed bytes. Collection never approves, activates,
+or publishes; changed/previously retired content is not returned for ingestion.
+Documented the manifest format, caller transaction contract and limits in
+`backend/README.md`. No new dependencies or later-task implementations were added.
+The initial 46 focused tests failed on the missing module before implementation;
+the completed suite has 59 passing focused tests. Backend regressions excluding
+the deliberately red T018/T019 future-implementation suites: 245 passed, 29 database
+checks skipped in the initial local run. Docker follow-up (2026-09-29): all 62
+focused tests passed, including all three PostgreSQL concurrency/rollback checks;
+the implemented backend regression suite passed with 274 tests and no skips
+(two upstream TestClient deprecation warnings). Validation used the isolated
+`pnw-t021-validation` Compose project and dedicated `pnw_t021_test` database with
+pgvector enabled; the deliberately red T018/T019 chat, unit ingestion, integration
+ingestion and grounded-answer suites were excluded. Validation containers were
+removed afterward, preserving volumes and application data. Ruff and full-app mypy pass.
+Run `backend/.venv/bin/pytest backend/tests/unit/test_ingestion_sources.py
+backend/tests/integration/test_source_collection.py`; configure the dedicated
+PostgreSQL database to execute all three integration checks. T022 onward remains
+unchanged; full ingestion/publication validation is still required at T032.
+
 - [ ] T022 [US1] Implement HTML and supported PDF/document text extraction plus cleaning/normalization in `backend/app/ingestion/extract.py`; remove navigation/boilerplate while preserving wording, dates, lists, headings/sections, readable tables and citation anchors; reject unsupported or unreliable extraction instead of publishing partial or invented content
 - [ ] T023 [US1] Implement deterministic, section-aware chunks with configurable size/overlap in `backend/app/ingestion/chunk.py`; retain paragraph/table meaning and ordinals, and preserve source URL/title/owning office, headings/anchors, campus, program/course scope, academic term/effective dates and immutable revision identity through chunk fields and source/revision relationships
 - [ ] T024 [US1] Implement a small configurable AI adapter in `backend/app/ai.py` with `embed` and `generate_grounded_answer`, deterministic test substitutes and bounded timeouts; embed every eligible chunk with the configured model, record model/version/dimension, and reject missing, non-finite or dimension-incompatible vectors; generation receives only approved retrieved excerpts

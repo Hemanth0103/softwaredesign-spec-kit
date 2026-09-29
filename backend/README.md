@@ -446,3 +446,103 @@ previously red T011 tests and 34 decision-gate cases. Tests cover emergency prio
 record limitations, correct office selection, inactive/campus contact handling,
 focused context, evidence failures and response schema conformance. Ruff lint/format
 and mypy passed. No new dependencies were required. T017 remains incomplete.
+
+## Governed source collection (T021)
+
+`app.ingestion.sources.collect_manifest(session, manifest_path, ...)` collects
+reviewed source bytes for the later extraction/store pipeline. It does not crawl
+links, extract text, generate embeddings, activate revisions, or commit. No new
+dependencies are required; it uses the existing HTTPX, Pydantic and SQLAlchemy.
+The ingestion CLI is deferred to T027.
+
+Supply an explicit JSON manifest using existing database source/revision UUIDs and
+the reviewed revision's SHA-256 digest. The following placeholders must be replaced:
+
+```json
+{
+  "schema_version": 1,
+  "documents": [
+    {
+      "source_id": "<governed source UUID>",
+      "revision_id": "<approved revision UUID>",
+      "canonical_url": "https://www.pnw.edu/registrar/",
+      "owner_office": "Registrar",
+      "sha256": "<reviewed lowercase SHA-256 digest>",
+      "media_type": "text/html"
+    }
+  ]
+}
+```
+
+For a local snapshot, additionally set `path` to a file relative to the manifest
+and `retrieved_at` to its timezone-aware retrieval timestamp. Absolute paths and
+paths/symlinks escaping the manifest directory are rejected. Each linked document
+needs a separate governed entry and its own approvals. The fixture corpus manifest
+in `tests/fixtures/sources/` is a different, test-only format; collection cannot use
+its synthetic approval flags as authorization.
+
+Collection requires an approved, active source, an approved or active revision,
+and source/revision approval audit events written by the owning-office governance
+service. It verifies URL, owner, source/revision association and reviewed hash
+against database records, and blocks unresolved source conflicts. It rechecks
+these records after I/O and locks them until the caller ends the transaction.
+Future T025 publication must perform its own final eligibility check. Readability
+and effective-date/context eligibility remain extraction/publication/retrieval gates;
+collecting an approved revision does not make it eligible for student answers.
+
+Only HTTPS `pnw.edu` or its subdomains on port 443 are accepted. Each redirect is
+validated before following; the original governed canonical URL remains the citation
+identity. HTML, PDF and DOCX media types are accepted for collection, and HTTP
+content type must match the manifest. Extraction support belongs to T022.
+Defaults are 10 MiB per document, three redirects and a 10-second timeout/deadline
+per download. The manifest itself is limited to 1 MiB and 1,000 entries. Streams
+are checked against the byte limit and elapsed deadline; a blocked operation can
+last an additional operation timeout. Compressed HTTP transfers are rejected to
+keep the byte bound explicit. Pass `timeout_seconds=settings.source_timeout_seconds`
+when wiring the configured application; limits can be supplied explicitly.
+
+Use the existing transaction helper with an initialized session factory:
+
+```python
+from pathlib import Path
+from app.db.session import session_scope
+from app.ingestion.sources import collect_manifest
+
+with session_scope(factory) as session:
+    collected = collect_manifest(
+        session, Path("approved-manifest.json"),
+        timeout_seconds=settings.source_timeout_seconds,
+    )
+```
+
+Each result preserves source identity/title/office/subject, revision scope/effective
+dates, fetched URL or snapshot path, retrieval timestamp, media type and actual hash.
+Matching reviewed content is returned as bytes. Changed bytes register a new
+`pending_review` revision with `readable=False`, or reuse the same source/hash record
+on retry. These results have `review_required=True` and `content=None`; the caller
+must commit the registration and obtain owning-office review before attempting
+that revision with an updated manifest. Existing terminal revisions are never
+reactivated. The collector never mutates the old hash, grants approval or publishes
+content. On any exception, the caller must roll back the transaction; do not consume
+partial work. Snapshot mounts and manifests are operator-controlled inputs.
+
+Run from the repository root:
+
+```sh
+backend/.venv/bin/pytest backend/tests/unit/test_ingestion_sources.py backend/tests/integration/test_source_collection.py
+backend/.venv/bin/ruff check backend/app/ingestion backend/tests/unit/test_ingestion_sources.py backend/tests/integration/test_source_collection.py
+backend/.venv/bin/mypy backend/app
+```
+
+The integration tests need `T006_TEST_DATABASE_URL` pointing to a dedicated
+PostgreSQL test database. They check pending registration visibility/idempotency,
+rollback, and retirement committed by a separate connection during collection.
+
+Docker validation (2026-09-29): all 62 focused T021 tests passed, including the
+three PostgreSQL integration checks. The implemented backend regression suite
+passed with 274 tests, no skips and two upstream TestClient deprecation warnings.
+The deliberately red future-task suites (`test_chat.py`, unit/integration
+`test_ingestion.py`, and `test_grounded_answers.py`) were excluded. Validation used
+the isolated `pnw-t021-validation` Compose project with `.env.example` settings
+and a dedicated `pnw_t021_test` database with pgvector enabled. Containers were
+removed afterward while preserving volumes; application data was untouched.
