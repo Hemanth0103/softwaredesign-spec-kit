@@ -150,7 +150,42 @@ Run from repository root: `backend/.venv/bin/pytest backend/tests/unit/test_extr
 and `backend/.venv/bin/pytest backend/tests/unit/test_ingestion.py -k 'html or readable or unreadable'`.
 T023 onward remains unchanged; full pipeline validation remains required at T032.
 
-- [ ] T023 [US1] Implement deterministic, section-aware chunks with configurable size/overlap in `backend/app/ingestion/chunk.py`; retain paragraph/table meaning and ordinals, and preserve source URL/title/owning office, headings/anchors, campus, program/course scope, academic term/effective dates and immutable revision identity through chunk fields and source/revision relationships
+- [X] T023 [US1] Implement deterministic, section-aware chunks with configurable size/overlap in `backend/app/ingestion/chunk.py`; retain paragraph/table meaning and ordinals, and preserve source URL/title/owning office, headings/anchors, campus, program/course scope, academic term/effective dates and immutable revision identity through chunk fields and source/revision relationships
+
+T023 validation (2026-09-30): Added pure deterministic word-budget chunking,
+immutable chunk fields and optional revision identity, section/anchor isolation,
+contiguous ordinals, bounded within-paragraph overlap, and complete table-row
+splits with repeated caption/header. Oversized rows and uncertain oversized PDF
+tables fail for review rather than truncation. Source URL/title/office and scope/
+effective-date/hash metadata remain on the existing revision/source relationships;
+persistence wiring remains T025. Documented the interface and limits in
+`backend/README.md`. The 6 existing chunk cases and 8 new boundary cases failed
+on the missing module before implementation. Focused extraction/chunk validation:
+24 passed, 8 embedding cases deselected. Implemented backend regressions: 316
+passed, 29 database-dependent checks skipped, 9 deselected; future chat, pipeline
+and grounded-answer suites excluded. Ruff and full-app mypy pass. No new
+dependencies; T024 onward remains unchanged. Full pipeline validation remains T032.
+
+
+T023 calendar correction validation (2026-09-30): Chunking now repeats only
+explicitly extracted academic-year cells and semester labels across adjacent PDF
+pages, separating new year schemas and semesters into distinct chunks. Original
+row text, empty column positions and source-page citations are preserved; table
+context records header/semester source pages. Pages 2–4 retain preceding headers,
+and page 5 Spring/Summer rows explicitly retain the page 4 2035-2036 header.
+Missing context, page gaps, intervening prose, unknown sections, inconsistent row
+widths and values in unnamed columns fail the whole chunk operation for manual
+review. T022 extraction was unchanged.
+Eight new regression cases failed before the fix and pass afterward, including
+exact ordered row/header/semester/page equality across the entire five-page PDF
+with a 100-word budget. Focused T023/existing ingestion checks: 32 passed,
+8 embedding cases deselected. Implemented backend regression: 324 passed,
+29 PostgreSQL-dependent checks skipped (no dedicated database configured),
+9 deselected, two upstream deprecation warnings. Future-task chat, integration
+ingestion and grounded-answer suites were excluded; embedding tests were
+excluded with `-k 'not embed'`. Ruff lint/format, full-app mypy and whitespace
+checks passed. No embeddings, vector storage, T024 or later work was implemented.
+
 - [ ] T024 [US1] Implement a small configurable AI adapter in `backend/app/ai.py` with `embed` and `generate_grounded_answer`, deterministic test substitutes and bounded timeouts; embed every eligible chunk with the configured model, record model/version/dimension, and reject missing, non-finite or dimension-incompatible vectors; generation receives only approved retrieved excerpts
 - [ ] T025 [US1] Store source records, reviewed revisions, chunks, full-text data, metadata and embeddings transactionally in `backend/app/ingestion/store.py`; make unchanged imports idempotent by source/hash/model identity, retain model/version/dimension compatibility, and publish only fully prepared eligible content after rechecking governance; failures must not expose partial chunks/vectors
 - [ ] T026 [US1] Implement refresh/rebuild in `backend/app/ingestion/refresh.py`: changed content creates a new immutable-hash revision pending owning-office review, approval permits regenerated chunks/embeddings, and activation atomically supersedes the old revision while preserving audit/history; model changes rebuild compatible immutable chunks, and retries never reactivate rejected, retired, superseded or conflicting material

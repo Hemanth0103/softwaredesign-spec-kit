@@ -607,3 +607,64 @@ suites `tests/contract/test_chat.py`, `tests/unit/test_ingestion.py`,
 `tests/integration/test_grounded_answers.py` were excluded from that regression
 run; the supported extraction cases in unit ingestion were run separately.
 No T023 or later implementation was added.
+
+### Deterministic chunking (T023)
+
+`app.ingestion.chunk.chunk_document(blocks, size=800, overlap=100,
+revision_id=...)` accepts extracted blocks and returns immutable chunks with
+contiguous zero-based ordinals. Pass `settings.chunk_size` and
+`settings.chunk_overlap` for deployment configuration; budgets count whitespace
+words, not model tokens. Each paragraph/section stays separate, and oversized
+prose uses the configured word overlap without crossing headings or anchors.
+HTML/DOCX tables that fit remain verbatim; larger tables repeat the caption and
+first header row while keeping body rows complete. PDF calendar tables are grouped
+by explicit academic-year header and semester, repeating both in every chunk,
+including continuations across adjacent pages. Empty year columns remain empty;
+a new header replaces the previous column schema. Header/semester provenance is
+recorded in `table_context`; `citation_anchor` stays on the actual row page.
+Only the extracted year-cell layout and explicit `Fall Semester`, `Spring Semester`
+or `Summer` labels are supported for PDF table context. Missing/duplicate headers,
+unknown sections, page gaps, heading changes, intervening prose, changed row widths,
+or values in unlabeled year columns raise `ValueError` for manual review. Other
+PDF table layouts also require review. No dates or years are inferred. Oversized
+complete rows with context require a larger budget; increasing the budget does
+not resolve ambiguous context.
+
+Supply the collected revision ID to preserve identity on every chunk. Persistence
+must attach that same `SourceRevision` through `SourceChunk.revision_id`; the
+revision/source relationships retain canonical URL, title, owning office, campus,
+program/course/term, effective dates and immutable content hash. Chunking performs
+no approval, scope inference, embedding or publication. Those pipeline steps
+remain separate tasks.
+
+Validate from `backend/`: `.venv/bin/pytest tests/unit/test_chunk.py
+ tests/unit/test_ingestion.py -k 'not embed'`.
+
+
+T023 calendar correction validation (2026-09-30): Chunking now repeats only
+explicitly extracted academic-year cells and semester labels across adjacent PDF
+pages, separating new year schemas and semesters into distinct chunks. Original
+row text, empty column positions and source-page citations are preserved; table
+context records header/semester source pages. Pages 2–4 retain preceding headers,
+and page 5 Spring/Summer rows explicitly retain the page 4 2035-2036 header.
+Missing context, page gaps, intervening prose, unknown sections, inconsistent row
+widths and values in unnamed columns fail the whole chunk operation for manual
+review. T022 extraction was unchanged.
+Eight new regression cases failed before the fix and pass afterward, including
+exact ordered row/header/semester/page equality across the entire five-page PDF
+with a 100-word budget. Focused T023/existing ingestion checks: 32 passed,
+8 embedding cases deselected. Implemented backend regression: 324 passed,
+29 PostgreSQL-dependent checks skipped (no dedicated database configured),
+9 deselected, two upstream deprecation warnings. Future-task chat, integration
+ingestion and grounded-answer suites were excluded; embedding tests were
+excluded with `-k 'not embed'`. Ruff lint/format, full-app mypy and whitespace
+checks passed. No embeddings, vector storage, T024 or later work was implemented.
+
+Run the implemented backend regressions from the repository root:
+
+```sh
+backend/.venv/bin/pytest backend/tests \
+  --ignore=backend/tests/contract/test_chat.py \
+  --ignore=backend/tests/integration/test_ingestion.py \
+  --ignore=backend/tests/integration/test_grounded_answers.py -k 'not embed'
+```
