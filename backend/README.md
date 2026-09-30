@@ -709,3 +709,36 @@ registered automatically or used as a production fallback.
 Validate from `backend/`:
 `.venv/bin/pytest tests/unit/test_ai.py tests/unit/test_ingestion.py`, `.venv/bin/ruff check app tests`, and
 `.venv/bin/mypy app`. No new packages or settings are required.
+
+### Transactional revision storage (T025)
+
+`app.ingestion.store.ingest_revision(factory, revision_id=..., content=...,
+media_type=..., embed=..., model=..., version=..., dimension=...,
+chunk_size=800, chunk_overlap=100, timeout_seconds=6.0)` owns its database
+transactions and returns the committed chunk UUIDs. Pass bytes from governed
+collection and an existing reviewed revision; both source and revision must have
+approval audit events. The source must remain approved/active and the revision
+approved or active, readable, conflict-free and currently effective. Scope and
+provenance stay on the revision/source relationships.
+
+Extraction and all embeddings are prepared before the write transaction. Storage
+locks source then revision, rechecks governance and stores every chunk, citation
+field, English full-text vector and validated embedding together. Any failure
+raises a privacy-safe `IngestionError` and rolls back the complete write. Provider
+calls have a bounded timeout and occur without governance locks. Concurrent
+imports serialize their final checks and reuse one committed set of chunk IDs.
+
+Unchanged source/hash/model/version/dimension imports reuse existing embeddings.
+A changed dimension or chunk layout under an existing model/version fails; use a
+new embedding version for a rebuild. Chunks remain immutable. This function does
+not approve or activate revisions; governance activation controls retrieval, and
+refresh orchestration remains T026.
+
+Run storage validation with a dedicated PostgreSQL database containing pgvector:
+
+```sh
+T006_TEST_DATABASE_URL=postgresql+psycopg://... .venv/bin/pytest \
+  tests/integration/test_ingestion.py -k 'not changed_content'
+```
+
+The excluded changed-content case requires the T026 refresh module.

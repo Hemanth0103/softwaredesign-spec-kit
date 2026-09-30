@@ -205,7 +205,26 @@ pass. No new dependencies/settings or later-task implementations. Full pipeline,
 DB and live-provider validation remain required at later checkpoints.
 Run from backend/: .venv/bin/pytest tests/unit/test_ai.py tests/unit/test_ingestion.py.
 
-- [ ] T025 [US1] Store source records, reviewed revisions, chunks, full-text data, metadata and embeddings transactionally in `backend/app/ingestion/store.py`; make unchanged imports idempotent by source/hash/model identity, retain model/version/dimension compatibility, and publish only fully prepared eligible content after rechecking governance; failures must not expose partial chunks/vectors
+- [X] T025 [US1] Store source records, reviewed revisions, chunks, full-text data, metadata and embeddings transactionally in `backend/app/ingestion/store.py`; make unchanged imports idempotent by source/hash/model identity, retain model/version/dimension compatibility, and publish only fully prepared eligible content after rechecking governance; failures must not expose partial chunks/vectors
+T025 validation (2026-09-30): Added transaction-owned revision storage with
+review/hash/official-URL checks, immutable chunk metadata, populated English
+full-text vectors and validated model/version/dimension embeddings. Preparation
+occurs outside governance locks; final source-before-revision locks recheck
+approval audits, readability, conflicts, dates and lifecycle. Complete writes
+commit together; failures roll back without partial retrieval units. Unchanged
+imports reuse chunk IDs without reembedding; concurrent imports serialize final
+publication, and incompatible dimensions/layouts require a new model/version.
+Activation remains the governance service; refresh remains T026. Updated the
+integration fixture to record source approval through governance and documented
+the storage interface in backend/README.md. Observed the missing-module failure
+before implementation. All 25 T025 PostgreSQL cases pass, including concurrency,
+write rollback and mid-embedding governance changes. Implemented backend
+regression: 404 passed, 1 deselected, no skips (two upstream deprecation warnings).
+Excluded future chat/grounded-answer suites and the T026 changed-content case.
+Ruff lint/format, full-app mypy and diff whitespace checks pass. Validation used
+an isolated pgvector PostgreSQL container/database; no new dependencies.
+Run the README storage command with T006_TEST_DATABASE_URL configured.
+
 - [ ] T026 [US1] Implement refresh/rebuild in `backend/app/ingestion/refresh.py`: changed content creates a new immutable-hash revision pending owning-office review, approval permits regenerated chunks/embeddings, and activation atomically supersedes the old revision while preserving audit/history; model changes rebuild compatible immutable chunks, and retries never reactivate rejected, retired, superseded or conflicting material
 - [ ] T027 [US1] Assemble one synchronous CLI in `backend/app/ingestion/__main__.py` supporting `python -m app.ingestion --manifest <path>` and `--rebuild`, with actionable counts/errors and nonzero failure exits; reuse the API image, support safe reruns and explicit local/test-only fixture/referral seeding, and never let a normal import grant approval
 - [ ] T028 [US1] Implement hybrid full-text and compatible exact pgvector retrieval in `backend/app/services/retrieval.py`; apply approved/active/effective/campus/program/course/term predicates before ranking and recheck results, preserving conflict information for an unresolved outcome rather than silently choosing another policy; return relevant chunk content and official source metadata, not navigation links alone

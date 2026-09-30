@@ -72,7 +72,6 @@ def revision(database, corpus_clock):
             title="Test parking policy",
             owner_office="Registrar",
             subject_area="Parking",
-            approval_status="approved",
         )
         row = SourceRevision(
             source=source,
@@ -87,6 +86,13 @@ def revision(database, corpus_clock):
         )
         session.add(row)
         session.flush()
+        review_source(
+            session,
+            reviewer=OWNER,
+            source_id=source.id,
+            action="approve",
+            reason="Test-only source review",
+        )
         review_source(
             session,
             reviewer=OWNER,
@@ -386,4 +392,70 @@ def test_ineligible_source_never_reaches_embedding(database, revision, state):
 
     with pytest.raises(module.IngestionError):
         ingest(database, revision, embed=forbidden)
+    assert chunks(database) == []
+
+
+@pytest.mark.parametrize("change", ["dimension", "layout"])
+def test_existing_identity_rejects_incompatible_retry(database, revision, change):
+    module = import_module("app.ingestion.store")
+    ingest(database, revision)
+    before = {row.id for row in chunks(database)}
+    options = {"dimension": 2} if change == "dimension" else {"chunk_size": 5}
+    with pytest.raises(module.IngestionError):
+        ingest(database, revision, **options)
+    assert {row.id for row in chunks(database)} == before
+
+
+def test_missing_approval_audit_blocks_provider(database, revision):
+    module = import_module("app.ingestion.store")
+    from sqlalchemy import delete
+
+    # Simulate legacy/external status writes that bypassed governance.
+    with database.begin() as session:
+        session.execute(delete(SourceReviewEvent).where(SourceReviewEvent.revision_id.is_(None)))
+    with pytest.raises(module.IngestionError):
+        ingest(database, revision, embed=lambda texts: pytest.fail("Unreviewed source sent"))
+    assert chunks(database) == []
+
+
+def test_concurrent_imports_reuse_one_complete_identity(database, revision):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(2)
+
+    def embed(texts):
+        barrier.wait(timeout=3)
+        return [[1.0, 0.5, 0.25] for _ in texts]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(ingest, database, revision, embed=embed) for _ in range(2)]
+        first, second = [future.result(timeout=10) for future in futures]
+    assert first == second
+    assert set(first) == {row.id for row in chunks(database)}
+
+
+@pytest.mark.parametrize("change", ["audit", "unreadable", "expired"])
+def test_final_gate_rechecks_review_readability_and_dates(database, revision, change):
+    from datetime import timedelta
+
+    from sqlalchemy import delete
+
+    module = import_module("app.ingestion.store")
+
+    def embed(texts):
+        with database.begin() as session:
+            row = session.get(SourceRevision, revision)
+            if change == "audit":
+                session.execute(
+                    delete(SourceReviewEvent).where(SourceReviewEvent.revision_id == revision)
+                )
+            elif change == "unreadable":
+                row.readable = False
+            else:
+                row.effective_until = utc_now() - timedelta(seconds=1)
+        return [[1.0, 0.5, 0.25] for _ in texts]
+
+    with pytest.raises(module.IngestionError):
+        ingest(database, revision, embed=embed)
     assert chunks(database) == []
