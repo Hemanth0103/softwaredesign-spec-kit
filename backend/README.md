@@ -546,3 +546,64 @@ The deliberately red future-task suites (`test_chat.py`, unit/integration
 the isolated `pnw-t021-validation` Compose project with `.env.example` settings
 and a dedicated `pnw_t021_test` database with pgvector enabled. Containers were
 removed afterward while preserving volumes; application data was untouched.
+
+## Document extraction (T022)
+
+`app.ingestion.extract.extract_document(content, media_type=...)` accepts collected
+bytes and returns deterministic frozen `ExtractedBlock` values with `text`,
+`heading`, `table_context`, and `citation_anchor`. It performs no fetching,
+governance changes, chunking, embedding, or publication. Callers must retain the
+collector's source/revision/provenance metadata and apply the later publication gate.
+
+Supported inputs are UTF-8 HTML, unencrypted digital PDFs, and simple DOCX
+WordprocessingML documents. Beautiful Soup handles HTML structure and entities;
+pypdf validates PDF content streams; pdfplumber supplies character coordinates
+(all extraction dependencies are locked with hashes).
+DOCX uses bounded ZIP reads and standard-library XML parsing with entity/DOCTYPE
+rejection, requiring no additional document dependency.
+
+HTML extraction removes navigation, scripts, forms, hidden content and structural
+boilerplate, prefers the main content, and retains section hierarchy and existing
+fragment identifiers. Tables keep explicit row boundaries, cell separators, and
+captions. DOCX preserves paragraph/list-item wording, standard Heading1–Heading6
+styles, bookmarks, and simple table rows. PDF extraction reconstructs rectangular clipping cells and aligned academic-year
+columns using character coordinates, retaining empty cells, wrapped labels, and
+page continuations with `page=N` citation locators. Overlapping cells, text crossing
+column boundaries, and tables without reliable boundaries require manual review.
+It does not infer semantic heading levels. No OCR or generated
+replacement text is used. Whitespace and Unicode NFC normalization preserve dates,
+course codes and policy wording; no summarization or dehyphenation is performed.
+
+Extraction fails for the entire document with `ExtractionError` on empty,
+unsupported, malformed or unreadable content, parser warnings, any unreadable PDF
+page, encrypted PDFs, PDF images/embedded forms, merged/nested/inconsistent tables,
+and DOCX embedded content, tracked changes, fields or referenced footnotes/endnotes.
+These cases require manual conversion and owning-office review of the converted
+bytes before ingestion. Decorative PDF images are also conservatively rejected.
+Limits are 10 MiB input, 500 PDF pages, 40 MiB decoded PDF content per page, and
+40 MiB declared expanded DOCX archive size with at most 1,000 entries. These bounds
+are validation checks, not a process memory/time sandbox for hostile parser inputs.
+
+Run the isolated extraction checks from `backend/`:
+
+```sh
+pytest tests/unit/test_extraction.py
+pytest tests/unit/test_ingestion.py -k 'html or readable or unreadable'
+```
+
+The remaining T018 chunking/embedding cases intentionally remain red until
+T023–T024. T022 does not establish full ingestion/publication or answer grounding.
+
+T022 PDF correction validation (2026-09-29): 38 focused extraction tests and
+10 existing ingestion extraction checks passed (14 future ingestion cases
+deselected). Exact calendar regressions cover all five Spring date columns,
+the Summer module label, continued/wrapped third-module rows, empty cells,
+deterministic output, overlapping cells, and text crossing inferred columns.
+Ruff and strict mypy passed. The implemented regression suite passed in the
+isolated `pnw-t022-correction` Docker Compose project with PostgreSQL enabled:
+312 passed, no skips, two upstream TestClient deprecation warnings. Future-task
+suites `tests/contract/test_chat.py`, `tests/unit/test_ingestion.py`,
+`tests/integration/test_ingestion.py`, and
+`tests/integration/test_grounded_answers.py` were excluded from that regression
+run; the supported extraction cases in unit ingestion were run separately.
+No T023 or later implementation was added.

@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "FastAPI backend for the PNW Student Information Chatbot"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "beautifulsoup4>=4.14,<5",
+    "pdfplumber>=0.11,<0.12",
+    "pypdf>=6.19,<7",
     "fastapi>=0.115,<1",
     "pydantic>=2,<3",
     "sqlalchemy>=2,<3",

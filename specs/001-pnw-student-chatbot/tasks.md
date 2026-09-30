@@ -129,7 +129,27 @@ backend/tests/integration/test_source_collection.py`; configure the dedicated
 PostgreSQL database to execute all three integration checks. T022 onward remains
 unchanged; full ingestion/publication validation is still required at T032.
 
-- [ ] T022 [US1] Implement HTML and supported PDF/document text extraction plus cleaning/normalization in `backend/app/ingestion/extract.py`; remove navigation/boilerplate while preserving wording, dates, lists, headings/sections, readable tables and citation anchors; reject unsupported or unreliable extraction instead of publishing partial or invented content
+- [X] T022 [US1] Implement HTML and supported PDF/document text extraction plus cleaning/normalization in `backend/app/ingestion/extract.py`; remove navigation/boilerplate while preserving wording, dates, lists, headings/sections, readable tables and citation anchors; reject unsupported or unreliable extraction instead of publishing partial or invented content
+
+T022 validation (2026-09-29): Added deterministic immutable extraction blocks for
+UTF-8 HTML, digital PDF and simple DOCX, preserving wording, section/list text,
+table rows/cells, HTML fragments, DOCX bookmarks and PDF page locators. Added
+hash-locked Beautiful Soup and pypdf dependencies; existing package pins retained.
+Unreadable/unsupported content fails the entire extraction, including partial PDFs,
+encrypted PDFs, embedded PDF images/forms, unreliable tables and unsupported DOCX
+content. Supported-format limits and manual conversion/review are documented in
+`backend/README.md`; PDF visual heading levels are not inferred. No publication,
+chunking, embeddings or later-task behavior was added.
+The existing 10 extraction cases failed on the missing module before implementation;
+all 10 now pass, along with 31 focused extraction tests. Backend regression excluding
+the deliberately unfinished T018/T019 ingestion/chat/grounded-answer suites:
+276 passed, 29 PostgreSQL-dependent checks skipped because no dedicated database
+was configured, and two upstream TestClient deprecation warnings. Ruff lint/format,
+full-app mypy, dependency compatibility and diff whitespace checks pass.
+Run from repository root: `backend/.venv/bin/pytest backend/tests/unit/test_extraction.py`
+and `backend/.venv/bin/pytest backend/tests/unit/test_ingestion.py -k 'html or readable or unreadable'`.
+T023 onward remains unchanged; full pipeline validation remains required at T032.
+
 - [ ] T023 [US1] Implement deterministic, section-aware chunks with configurable size/overlap in `backend/app/ingestion/chunk.py`; retain paragraph/table meaning and ordinals, and preserve source URL/title/owning office, headings/anchors, campus, program/course scope, academic term/effective dates and immutable revision identity through chunk fields and source/revision relationships
 - [ ] T024 [US1] Implement a small configurable AI adapter in `backend/app/ai.py` with `embed` and `generate_grounded_answer`, deterministic test substitutes and bounded timeouts; embed every eligible chunk with the configured model, record model/version/dimension, and reject missing, non-finite or dimension-incompatible vectors; generation receives only approved retrieved excerpts
 - [ ] T025 [US1] Store source records, reviewed revisions, chunks, full-text data, metadata and embeddings transactionally in `backend/app/ingestion/store.py`; make unchanged imports idempotent by source/hash/model identity, retain model/version/dimension compatibility, and publish only fully prepared eligible content after rechecking governance; failures must not expose partial chunks/vectors
