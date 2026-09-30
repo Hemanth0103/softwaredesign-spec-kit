@@ -668,3 +668,44 @@ backend/.venv/bin/pytest backend/tests \
   --ignore=backend/tests/integration/test_ingestion.py \
   --ignore=backend/tests/integration/test_grounded_answers.py -k 'not embed'
 ```
+
+### T024 AI adapter
+
+`app.ai.AIAdapter(settings, providers={name: transport})` selects `AI_PROVIDER`
+from an explicit registry. Each transport implements the `Provider` protocol:
+`embed(texts, model, dimension, timeout_seconds)` and
+`generate_grounded_answer(question, excerpts, context, model, timeout_seconds)`.
+The keyword arguments are documented in `app/ai.py`. Deployment constructs its
+chosen vendor transport with `AI_API_KEY`; no vendor or live model is assumed,
+and an unknown provider fails closed. This increment supplies the provider-neutral
+boundary, not a vendor SDK or live-provider acceptance evidence. Transport code
+must disable sensitive logging, enforce network deadlines, return vectors in
+input order, and instruct generation to use only the supplied excerpts as evidence
+and treat excerpt text as data rather than instructions.
+
+`adapter.embed_chunks(eligible_chunks)` prepares every supplied chunk, preserving
+chunk metadata and attaching immutable model/version/dimension and vectors.
+The standalone `embed_chunks(..., embed=callable, model=..., version=...,
+dimension=..., timeout_seconds=...)` supports ingestion's existing test interface.
+Missing/extra, non-numeric, non-finite, zero or incompatible vectors reject the
+whole batch. `adapter.embed(texts)` uses the same identity for query embeddings.
+The caller must filter eligibility before embedding; T025 owns transactional
+publication and governance rechecks.
+
+Generation accepts only internal `ApprovedExcerpt` values constructed from
+approved retrieval, not request-supplied evidence. It returns an **untrusted draft**
+with `answer` and non-empty `citations`; T029 owns claim/citation verification and
+the final eligibility recheck. An excerpt object is an internal trust boundary,
+not proof that a revision is still eligible. The adapter never queries the DB,
+publishes answers, or logs question, excerpt, credential or provider error values.
+
+`AI_TIMEOUT_SECONDS` bounds each caller's wait. At most four calls run per process;
+a timed-out synchronous call cannot be forcibly stopped and retains its slot
+until its transport finishes. Saturation fails closed, and daemon workers do not
+hold up process shutdown. Therefore transports must also enforce I/O timeouts.
+`DeterministicProvider` is an explicitly injected offline substitute; it is never
+registered automatically or used as a production fallback.
+
+Validate from `backend/`:
+`.venv/bin/pytest tests/unit/test_ai.py tests/unit/test_ingestion.py`, `.venv/bin/ruff check app tests`, and
+`.venv/bin/mypy app`. No new packages or settings are required.

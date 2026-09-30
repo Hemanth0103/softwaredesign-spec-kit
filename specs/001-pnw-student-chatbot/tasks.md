@@ -186,7 +186,25 @@ ingestion and grounded-answer suites were excluded; embedding tests were
 excluded with `-k 'not embed'`. Ruff lint/format, full-app mypy and whitespace
 checks passed. No embeddings, vector storage, T024 or later work was implemented.
 
-- [ ] T024 [US1] Implement a small configurable AI adapter in `backend/app/ai.py` with `embed` and `generate_grounded_answer`, deterministic test substitutes and bounded timeouts; embed every eligible chunk with the configured model, record model/version/dimension, and reject missing, non-finite or dimension-incompatible vectors; generation receives only approved retrieved excerpts
+- [X] T024 [US1] Implement a small configurable AI adapter in `backend/app/ai.py` with `embed` and `generate_grounded_answer`, deterministic test substitutes and bounded timeouts; embed every eligible chunk with the configured model, record model/version/dimension, and reject missing, non-finite or dimension-incompatible vectors; generation receives only approved retrieved excerpts
+T024 validation (2026-09-30): Added the provider-neutral settings-selected AI
+adapter, explicit deployment provider registry, immutable embedding identity and
+chunk metadata, full-batch vector validation, internal approved-excerpt generation
+boundary, structured untrusted drafts, safe errors, bounded waits and concurrent
+calls, and explicitly injected deterministic substitutes. No vendor/model is
+assumed: deployments must supply a Provider transport; no live-provider acceptance
+is claimed. Eligibility and publication remain caller/T025 responsibilities;
+claim/citation verification remains T029. Documented transport and timeout
+contracts in backend/README.md. Eight existing embedding tests and eleven initial
+adapter tests were observed red before implementation. Final focused suite:
+41 passed. Implemented backend regression: 350 passed, 29 PostgreSQL-dependent
+checks skipped without a dedicated DB, two upstream deprecation warnings.
+Deliberately unfinished T019 chat/grounded-answer and T018 DB ingestion suites
+were excluded. Ruff across app/tests, full-app mypy and git diff whitespace checks
+pass. No new dependencies/settings or later-task implementations. Full pipeline,
+DB and live-provider validation remain required at later checkpoints.
+Run from backend/: .venv/bin/pytest tests/unit/test_ai.py tests/unit/test_ingestion.py.
+
 - [ ] T025 [US1] Store source records, reviewed revisions, chunks, full-text data, metadata and embeddings transactionally in `backend/app/ingestion/store.py`; make unchanged imports idempotent by source/hash/model identity, retain model/version/dimension compatibility, and publish only fully prepared eligible content after rechecking governance; failures must not expose partial chunks/vectors
 - [ ] T026 [US1] Implement refresh/rebuild in `backend/app/ingestion/refresh.py`: changed content creates a new immutable-hash revision pending owning-office review, approval permits regenerated chunks/embeddings, and activation atomically supersedes the old revision while preserving audit/history; model changes rebuild compatible immutable chunks, and retries never reactivate rejected, retired, superseded or conflicting material
 - [ ] T027 [US1] Assemble one synchronous CLI in `backend/app/ingestion/__main__.py` supporting `python -m app.ingestion --manifest <path>` and `--rebuild`, with actionable counts/errors and nonzero failure exits; reuse the API image, support safe reruns and explicit local/test-only fixture/referral seeding, and never let a normal import grant approval
