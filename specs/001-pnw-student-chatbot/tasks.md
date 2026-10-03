@@ -355,7 +355,21 @@ full PostgreSQL/provider validation remains T032 and manual WCAG review T046.
 Run from `frontend/`: `npm test`, `npm run typecheck`, `npm run lint`,
 `npm run build`, `npm run test:e2e`, and `npm run test:a11y`.
 
-- [ ] T032 [US1] Document and exercise local database population in `README.md`: environment/model configuration, supported document formats, Docker Compose build/start, Alembic upgrade, mounted approved manifest, the ingestion/rebuild command, test-only seeding versus live approval, corpus/index inspection and representative retrieval/citation checks; run T018–T020 against the real PostgreSQL fixture corpus
+- [X] T032 [US1] Document and exercise local database population in `README.md`: environment/model configuration, supported document formats, Docker Compose build/start, Alembic upgrade, mounted approved manifest, the ingestion/rebuild command, test-only seeding versus live approval, corpus/index inspection and representative retrieval/citation checks; run T018–T020 against the real PostgreSQL fixture corpus
+
+T032 validation (2026-10-03): Updated the root README with reproducible runtime and
+isolated test-corpus setup, explicit provider registration, approval/activation,
+mounted CLI manifest, supported formats, rebuild, SQL/index inspection and retrieval.
+Compose population prepared 3 fixture documents / 77 searchable chunks; explicit
+test-only activation produced 3 active revisions / 9 audits. Repeat import and
+rebuild preserved all chunk IDs and audits. Runtime build/start, Alembic head,
+website and proxied API health passed. Compose T018–T019: 128 passed, no skips;
+T020: 17 component tests and 5 Chromium tests passed. Full backend regression on
+dedicated PostgreSQL: 564 passed, no skips; frontend: 43 unit tests, typecheck,
+lint, build and axe smoke passed. No application/dependency changes or later task
+implementation. See [validation results](validation-results.md) for commands,
+database inspection, cleanup and deterministic-provider/browser-test limitations.
+Live-provider acceptance and human release reviews remain at their later tasks.
 
 **Checkpoint**: The complete RAG workflow works from approved input through verified student response. Shared safety/context gates remain enabled. This is the internal MVP validation point; complete remaining story and release acceptance checks before student launch.
 
