@@ -248,7 +248,28 @@ files were left unchanged. Validation used an isolated pgvector database;
 no dependencies or later tasks changed. Run the README ingestion command with
 T006_TEST_DATABASE_URL configured.
 
-- [ ] T027 [US1] Assemble one synchronous CLI in `backend/app/ingestion/__main__.py` supporting `python -m app.ingestion --manifest <path>` and `--rebuild`, with actionable counts/errors and nonzero failure exits; reuse the API image, support safe reruns and explicit local/test-only fixture/referral seeding, and never let a normal import grant approval
+- [X] T027 [US1] Assemble one synchronous CLI in `backend/app/ingestion/__main__.py` supporting `python -m app.ingestion --manifest <path>` and `--rebuild`, with actionable counts/errors and nonzero failure exits; reuse the API image, support safe reruns and explicit local/test-only fixture/referral seeding, and never let a normal import grant approval
+
+T027 validation (2026-10-03): Added the synchronous module CLI for governed
+manifest import and immutable embedding rebuild, explicit deployment provider
+factory registration, actionable aggregate counts and privacy-safe nonzero errors.
+Normal imports never approve or activate. Changed content commits pending review
+and reports its revision ID; per-revision preparation remains atomic and retryable.
+Explicit local/test-only snapshot/referral seeding records synthetic approval
+audits only for absent identities, preserves existing/terminal governance state,
+validates snapshot hashes and official contacts, and rolls back all seeding on
+invalid input. The offline provider requires an explicit local/test opt-in.
+Documented manifest/provider setup, API-image invocation, fixture/referral inputs,
+exit codes, transaction boundaries and validation commands in backend/README.md.
+Observed seven missing-module test failures before implementation. All 14 focused
+CLI checks (eight unit, six PostgreSQL) pass within the implemented backend suite:
+430 passed, no skips, two upstream TestClient deprecation warnings. Future chat
+contract/grounded-answer suites were excluded because they require T028–T030.
+Ruff lint, changed-file formatting, full-app mypy, module help invocation and diff
+whitespace checks pass. Validation used an isolated pgvector container/database;
+no dependencies or later tasks changed. A live provider factory must be supplied
+by the deployment; live-provider and full-story acceptance remain later checks.
+
 - [ ] T028 [US1] Implement hybrid full-text and compatible exact pgvector retrieval in `backend/app/services/retrieval.py`; apply approved/active/effective/campus/program/course/term predicates before ranking and recheck results, preserving conflict information for an unresolved outcome rather than silently choosing another policy; return relevant chunk content and official source metadata, not navigation links alone
 - [ ] T029 [US1] Implement structured generated-answer validation in `backend/app/services/citation_verifier.py`; every citation must match a retrieved eligible official canonical HTTPS URL/title and supporting excerpt, each policy claim must be supported, and applicable context must match; recheck source eligibility before sending the answer and fail safely on unsupported or malformed output
 - [ ] T030 [US1] Connect safety → account/context checks → eligible retrieval → grounded generation → citation verification → response in `backend/app/services/chat_service.py` and expose `POST /api/v1/chat/answers` in `backend/app/api/routes/chat.py`; use the foundation decisions for all five outcomes, including provider timeout/unavailability, and never run normal retrieval/generation first for emergencies

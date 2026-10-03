@@ -787,3 +787,81 @@ or rejection during a provider call cannot publish or reactivate material.
 The synchronous manifest/`--rebuild` CLI remains T027. No scheduler, cache or new
 service is introduced. The PostgreSQL command above exercises the complete
 refresh/rebuild and ingestion suite.
+
+### Synchronous ingestion CLI (T027)
+
+Run from `backend/` with the documented environment variables and migrated
+PostgreSQL database. The CLI uses the governed manifest format described above:
+
+```sh
+python -m app.ingestion --manifest /absolute/path/manifest.json --provider-factory deployment_ai:build
+python -m app.ingestion --manifest /absolute/path/manifest.json --rebuild --provider-factory deployment_ai:build
+```
+
+`deployment_ai:build` is a deployment-supplied Python callable accepting `Settings`
+and returning the `app.ai.Provider` interface. Package it in the API image; the
+repository has no registered live vendor adapter. Provider credentials come from
+settings. The command never silently substitutes an offline provider. `--rebuild`
+prepares the configured model/version/dimension through the existing rebuild
+service and retains old immutable chunks; change the embedding version when
+changing dimensions or chunk layout.
+
+Reuse the API image and mount the manifest directory read-only (all referenced
+snapshots must remain inside it):
+
+```sh
+docker compose run --rm -v /absolute/path/corpus:/corpus:ro api python -m app.ingestion --manifest /corpus/manifest.json --provider-factory deployment_ai:build
+```
+
+Normal imports require previously approved source/revision identities and their
+owning-office approval audits. Changed content registers a pending-review revision
+and prints its ID; obtain office review and update the manifest revision ID/hash
+before retrying. Preparation never activates a revision; use the governance
+workflow above to activate it after successful preparation.
+
+For an isolated local/test database only, explicitly opt into synthetic fixture
+approval and offline embeddings:
+
+```sh
+python -m app.ingestion --manifest /absolute/path/fixture-manifest.json --environment test --seed-fixtures --deterministic --seed-referrals /absolute/path/referrals.json
+```
+
+Use the **governed ingestion manifest** schema, not the test corpus scenario
+manifest under `tests/fixtures/sources/`. Supply stable source/revision UUIDs,
+canonical PNW URLs, owners, SHA-256 hashes, relative snapshot paths and timezone-aware
+retrieval timestamps. Fixture-created sources use the title/subject `Local/test
+fixture`, campus `all`, and synthetic approval audits. They remain approved,
+unactivated revisions. Existing source/revision state is never reapproved or
+restored by a rerun. Use separate governed manifests/review workflows for scoped
+campus/program/course/term acceptance cases.
+
+Referral JSON is an array of objects with stable `id` UUIDs, `topic`, `office`,
+`contact_url` (official PNW HTTPS), optional `campus` (`all`, `hammond`, `westville`),
+`phone` and `email`. Example:
+
+```json
+[{"id":"d9823027-55e3-469f-a04e-77c54eaf0727","topic":"registration","office":"PNW Registrar","contact_url":"https://www.pnw.edu/registrar/"}]
+```
+
+Referral seeding is explicit and local/test only. Source/referral seeding commits
+as one transaction; invalid input rolls it all back. Reruns reuse matching IDs,
+reject changed fixture metadata and preserve inactive referrals. A local/test
+flag is an operator assertion: point it only at a dedicated non-production
+database. Neither flag is enabled by default.
+
+Output reports prepared revisions, chunk IDs returned (including reused chunks),
+review-required revisions, failures and newly seeded revisions/referrals. Exit
+codes: `0` all requested preparation succeeded; `1` operational/preparation failure
+or pending office review; `2` invalid command usage. Collection is transactional;
+preparation commits each revision atomically and continues after individual
+preparation failures. Successful revisions remain committed for safe retries.
+Errors omit exception details, credentials and document bodies. Check manifest,
+approval audits, extraction support, embedding identity, provider and database
+availability as indicated.
+
+Validate from the repository root (set `T006_TEST_DATABASE_URL` to a dedicated
+PostgreSQL database with pgvector to execute integration tests):
+
+```sh
+backend/.venv/bin/pytest backend/tests/unit/test_ingestion_cli.py backend/tests/integration/test_ingestion_cli.py
+```
