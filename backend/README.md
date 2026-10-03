@@ -869,9 +869,8 @@ backend/.venv/bin/pytest backend/tests/unit/test_ingestion_cli.py backend/tests/
 
 `app.services.citation_verifier.verify_answer(factory, draft=..., retrieval=...,
 context=..., now=...)` returns a validated `SupportedAnswer` or raises the
-privacy-safe `CitationVerificationError`. T030 must call it immediately before
-returning an answer and select a safe referral/unresolved outcome on failure.
-The student route and chat orchestration remain T030.
+privacy-safe `CitationVerificationError`. The chat service calls it immediately
+before returning an answer and selects a safe unresolved outcome on failure.
 
 The verifier accepts the AI adapter's `{answer, citations}` draft with
 `{"chunkId": "UUID"}` citations, or the strict public supported-answer shape
@@ -899,3 +898,59 @@ or logged by this module.
 Validate with a dedicated pgvector database configured through
 `T006_TEST_DATABASE_URL`:
 `backend/.venv/bin/pytest backend/tests/unit/test_citation_verifier.py backend/tests/integration/test_citation_verifier.py`.
+
+## Student answer API (T030)
+
+`POST /api/v1/chat/answers` is public and accepts the strict student question/context
+contract. Responses are validated as one of `answer`, `needs_context`, `referral`,
+`unresolved`, or `emergency`, with `Cache-Control: no-store`. Existing middleware
+returns private 400/429/500 errors; no exception text or submitted content is logged.
+The application creates its database engine/session factory at startup without
+connecting, and disposes the engine at shutdown.
+
+`ChatService` checks emergency indicators before database or AI access, using the
+foundation's published emergency contacts. It resolves normal referrals against
+the governed directory (including inactive rows so defaults cannot override a
+disabled contact). A database failure receives the private 500 response. An empty
+directory uses the foundation's official default contacts.
+
+Before embedding, a conservative PostgreSQL lexical probe checks approved,
+active/effective, readable source sections for missing restricted campus, program,
+course, or term scope. It filters supplied context and asks one focused question
+at a time; universal sections require no context. This probe does not infer context
+from question text and can over-request context on broad lexical matches. It never
+supplies evidence to the generator. Normal retrieval then applies all eligibility
+and embedding identity predicates. Conflicts block generation; empty retrieval,
+embedding/generation failures, and timeouts produce a safe referral. Failed draft
+verification produces an unresolved result. Final verification uses a fresh clock
+and database read, preserving the strict complete-excerpt requirement above.
+
+Deployments must explicitly register their provider transport. For example, a
+deployment-owned `deployment_app.py` can export:
+
+```python
+from app.config import load_settings
+from app.main import app
+from deployment_ai import build
+
+settings = load_settings()
+app.state.ai_providers = {settings.ai_provider: build(settings)}
+```
+
+Run that module with `uvicorn deployment_app:app --host 0.0.0.0 --port 8000`
+(or override the API container command accordingly). `build(settings)` follows
+the same provider protocol as the ingestion CLI's `--provider-factory`; the
+transport must enforce timeouts and disable sensitive logging. No vendor is
+selected automatically and no deterministic provider is registered by default.
+Missing provider registration yields a referral for normal questions; health,
+emergency guidance, account referrals, and lexical context checks remain available.
+
+Tests may inject `embed`, `generate_grounded_answer`, and `now` into `ChatService`
+or override the route's `get_chat_service` dependency. Both AI stages are bounded,
+including injected callables. An uncooperative timed-out transport can continue in
+the existing bounded daemon executor, but its late draft cannot reach verification
+or the student response. Questions, contexts, and drafts stay request-scoped and
+are never written to storage.
+
+Validate with a dedicated pgvector database through `T006_TEST_DATABASE_URL`:
+`backend/.venv/bin/pytest backend/tests/unit/test_chat_service.py backend/tests/contract/test_chat.py backend/tests/integration/test_grounded_answers.py`.

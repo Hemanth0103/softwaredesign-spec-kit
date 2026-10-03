@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def test_health_and_no_chat_endpoint(monkeypatch):
+def test_health_and_emergency_need_no_external_services(monkeypatch):
     # These are fake local values. This test makes no external network calls.
     values = {
         "DATABASE_URL": "postgresql+psycopg://pnw:test@db:5432/pnw",
@@ -20,8 +20,13 @@ def test_health_and_no_chat_endpoint(monkeypatch):
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         response = client.get("/api/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
-        assert client.post("/api/v1/chat/answers", json={"question": "hello"}).status_code == 404
+        emergency = client.post(
+            "/api/v1/chat/answers", json={"question": "There is an active shooter"}
+        )
+        assert emergency.status_code == 200
+        assert emergency.json()["outcome"] == "emergency"
+        assert emergency.headers["cache-control"] == "no-store"

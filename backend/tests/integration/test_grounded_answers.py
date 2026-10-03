@@ -8,7 +8,7 @@ Reuse the T018 ingest_revision interface. Proposed T028–T030 seam:
 ChatService(session_factory=..., settings=..., embed=...,
             generate_grounded_answer=..., now=...).answer(StudentQuestion)
 The generator accepts keyword question/excerpts/context; each excerpt exposes
-revision_id, canonical_url, title and text. It returns the public answer shape.
+revision_id, url, title and text. It returns the public answer shape.
 get_chat_service in app.api.routes.chat is the HTTP dependency. These internal
 interfaces are test-first proposals, not additional public API requirements.
 
@@ -95,7 +95,9 @@ def embed(texts):
 
 
 @pytest.fixture
-def add_document(database, corpus_clock):
+def add_document(database, corpus_clock, monkeypatch):
+    monkeypatch.setattr("app.ingestion.store.utc_now", lambda: corpus_clock)
+
     def add(slug, claim, *, content=None, media_type="text/html", context=None, **identity):
         context = CONTEXT if context is None else context
         content = content or (f"<main><h1 id='policy'>{slug}</h1><p>{claim}</p></main>".encode())
@@ -105,7 +107,7 @@ def add_document(database, corpus_clock):
                 title=f"Fixture {slug}",
                 owner_office="Registrar",
                 subject_area="registration",
-                approval_status="approved",
+                approval_status="draft",
             )
             revision = SourceRevision(
                 source=source,
@@ -121,6 +123,13 @@ def add_document(database, corpus_clock):
             )
             session.add(revision)
             session.flush()
+            review_source(
+                session,
+                reviewer=OWNER,
+                source_id=source.id,
+                action="approve",
+                reason="Approve synthetic test-only source",
+            )
             review_source(
                 session,
                 reviewer=OWNER,
@@ -168,8 +177,21 @@ def add_document(database, corpus_clock):
                 )
                 is not None
             )
+            texts = list(
+                session.scalars(
+                    select(SourceChunk.text)
+                    .where(SourceChunk.revision_id == revision_id)
+                    .order_by(SourceChunk.ordinal)
+                )
+            )
+            evidence_text = claim if claim in texts else "\n\n".join(texts)
         return SimpleNamespace(
-            id=revision_id, source_id=source_id, url=url, title=title, claim=claim
+            id=revision_id,
+            source_id=source_id,
+            url=url,
+            title=title,
+            claim=claim,
+            evidence_text=evidence_text,
         )
 
     return add
@@ -178,7 +200,8 @@ def add_document(database, corpus_clock):
 def draft(document, *, answer=None, context=None):
     return {
         "outcome": "answer",
-        "answer": answer or document.claim,
+        # T029 requires complete excerpts, preserving document/table conditions.
+        "answer": answer or document.evidence_text,
         "citations": [{"title": document.title, "url": document.url}],
         "appliedContext": dict(CONTEXT if context is None else context),
     }
@@ -261,7 +284,7 @@ def test_ingested_policy_returns_source_backed_answer(add_document, harness, slu
     assert harness.calls
     evidence = [e for call in harness.calls for e in call]
     assert any(e.revision_id == document.id and claim in e.text for e in evidence)
-    assert all(e.canonical_url == document.url and e.title == document.title for e in evidence)
+    assert all(e.url == document.url and e.title == document.title for e in evidence)
 
 
 def test_document_prerequisite_and_table_cells_survive_to_answer(add_document, harness):
@@ -285,7 +308,8 @@ def test_document_prerequisite_and_table_cells_survive_to_answer(add_document, h
     harness.calls.clear()
     harness.draft = draft(table)
     body = harness.ask("What is the Hammond add/drop deadline?")
-    assert body["outcome"] == "answer" and body["answer"] == table.claim
+    assert body["outcome"] == "answer" and body["answer"] == table.evidence_text
+    assert "Hammond" in body["answer"] and "September 30, 2026" in body["answer"]
     assert any(
         "Hammond" in e.text and "September 30, 2026" in e.text
         for call in harness.calls
@@ -432,3 +456,44 @@ def test_retirement_after_retrieval_is_rechecked_before_return(database, add_doc
     assert harness.calls
     with database() as session:
         assert session.get(ApprovedSource, document.source_id).lifecycle_status == "retired"
+
+
+@pytest.mark.parametrize("field", list(CONTEXT))
+def test_missing_material_scope_asks_before_generation(add_document, harness, field):
+    add_document("parking", "Display the permit while parked.")
+    context = {key: value for key, value in CONTEXT.items() if key != field}
+    body = harness.ask("What is the parking permit rule?", context=context)
+    assert body["outcome"] == "needs_context"
+    assert body["requiredFields"] == [field]
+    assert harness.calls == []
+
+
+def test_general_evidence_does_not_require_context(add_document, harness):
+    document = add_document("parking", "Display the permit while parked.", context={})
+    harness.draft = draft(document, context={})
+    body = harness.ask("What is the parking permit rule?", context={})
+    assert body["outcome"] == "answer"
+    assert body["appliedContext"] == {}
+
+
+def test_relevant_conflict_blocks_generation(database, add_document, harness):
+    document = add_document("parking", "Display the permit while parked.")
+    with database.begin() as session:
+        revision = session.get(SourceRevision, document.id)
+        revision.status = "unresolved"
+        revision.conflict_group = uuid4()
+    body = harness.ask("What is the parking permit rule?")
+    assert body["outcome"] == "unresolved"
+    assert harness.calls == []
+
+
+def test_generation_timeout_returns_referral(add_document, harness):
+    add_document("parking", "Display the permit while parked.")
+
+    def timeout():
+        raise TimeoutError("private-provider-secret")
+
+    harness.on_generate = timeout
+    body = harness.ask("What is the parking permit rule?")
+    assert body["outcome"] == "referral"
+    assert "private-provider-secret" not in str(body)

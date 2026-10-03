@@ -311,7 +311,30 @@ and `backend/.venv/bin/pytest backend/tests/unit/test_citation_verifier.py
 backend/tests/integration/test_citation_verifier.py`. No new dependencies or later
 task implementations were added.
 
-- [ ] T030 [US1] Connect safety → account/context checks → eligible retrieval → grounded generation → citation verification → response in `backend/app/services/chat_service.py` and expose `POST /api/v1/chat/answers` in `backend/app/api/routes/chat.py`; use the foundation decisions for all five outcomes, including provider timeout/unavailability, and never run normal retrieval/generation first for emergencies
+- [X] T030 [US1] Connect safety → account/context checks → eligible retrieval → grounded generation → citation verification → response in `backend/app/services/chat_service.py` and expose `POST /api/v1/chat/answers` in `backend/app/api/routes/chat.py`; use the foundation decisions for all five outcomes, including provider timeout/unavailability, and never run normal retrieval/generation first for emergencies
+
+T030 validation (2026-10-03): Added request-scoped orchestration and the public
+validated/no-store endpoint, application-owned engine startup/disposal, emergency
+checks before database/AI access, governed account referrals, conservative lexical
+scope follow-ups before embedding, eligible hybrid retrieval, bounded embedding/
+generation, and final citation verification with a fresh eligibility clock/read.
+Conflicts and rejected drafts return unresolved; empty evidence and provider
+failures/timeouts return referrals. No question/context/draft storage or logging.
+Provider transport registration is explicit through `app.state.ai_providers`,
+documented in `backend/README.md`; no fake or vendor is selected automatically.
+The conservative scope probe can over-request context on broad lexical matches;
+the T029 complete-excerpt verification limit remains unchanged.
+Observed 22 existing HTTP failures and 10 new orchestration failures before
+implementation. Aligned T019 PostgreSQL fixtures with required source approval
+audits, a fixed ingestion clock, established excerpt URL fields, and complete
+document/table text; added scope/conflict/provider integration cases and replaced
+the obsolete no-chat health assertion with an offline emergency check.
+Full backend regression against the isolated `pnw-t030-test-db` pgvector database:
+564 passed, no skips, two upstream TestClient deprecation warnings. Ruff, full-app
+mypy and whitespace checks pass. No new dependencies. Run
+`T006_TEST_DATABASE_URL=<dedicated-pgvector-url> backend/.venv/bin/pytest backend/tests`.
+T031 and later tasks remain unchanged; live-provider acceptance, latency and
+frontend validation remain at their planned checkpoints.
 - [ ] T031 [US1] Build the accessible student chat form, session-only state and all outcome rendering in `frontend/src/features/chat/StudentChat.tsx`, `frontend/src/features/chat/chatState.ts`, and `frontend/src/styles/accessibility.css`; use memory/session storage only, clear at session end, display descriptive citations/context and prominent emergency contacts, and provide labels, visible focus, keyboard access, contrast and live announcements
 - [ ] T032 [US1] Document and exercise local database population in `README.md`: environment/model configuration, supported document formats, Docker Compose build/start, Alembic upgrade, mounted approved manifest, the ingestion/rebuild command, test-only seeding versus live approval, corpus/index inspection and representative retrieval/citation checks; run T018–T020 against the real PostgreSQL fixture corpus
 

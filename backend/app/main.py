@@ -1,4 +1,4 @@
-"""Public API foundation; student/reviewer feature routes arrive in later tasks."""
+"""Public API and application-owned database lifecycle."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -6,19 +6,28 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.middleware import configure_middleware
+from app.api.routes.chat import router as chat_router
 from app.config import load_settings
+from app.db.session import create_db_engine, create_session_factory
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Validate configuration before Docker calls the API healthy. This does not
-    # contact AI/OIDC services or claim the unfinished chatbot is ready to use.
     app.state.settings = load_settings()
-    yield
+    settings = app.state.settings
+    engine = create_db_engine(
+        settings.database_url.get_secret_value(), settings.database_timeout_seconds
+    )
+    app.state.session_factory = create_session_factory(engine)
+    try:
+        yield
+    finally:
+        engine.dispose()
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 configure_middleware(app)
+app.include_router(chat_router)
 
 
 @app.get("/api/health")
