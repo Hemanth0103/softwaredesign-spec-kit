@@ -335,7 +335,26 @@ mypy and whitespace checks pass. No new dependencies. Run
 `T006_TEST_DATABASE_URL=<dedicated-pgvector-url> backend/.venv/bin/pytest backend/tests`.
 T031 and later tasks remain unchanged; live-provider acceptance, latency and
 frontend validation remain at their planned checkpoints.
-- [ ] T031 [US1] Build the accessible student chat form, session-only state and all outcome rendering in `frontend/src/features/chat/StudentChat.tsx`, `frontend/src/features/chat/chatState.ts`, and `frontend/src/styles/accessibility.css`; use memory/session storage only, clear at session end, display descriptive citations/context and prominent emergency contacts, and provide labels, visible focus, keyboard access, contrast and live announcements
+- [X] T031 [US1] Build the accessible student chat form, session-only state and all outcome rendering in `frontend/src/features/chat/StudentChat.tsx`, `frontend/src/features/chat/chatState.ts`, and `frontend/src/styles/accessibility.css`; use memory/session storage only, clear at session end, display descriptive citations/context and prominent emergency contacts, and provide labels, visible focus, keyboard access, contrast and live announcements
+
+T031 validation (2026-10-03): Replaced the starter screen with the labeled student
+form and all five API outcome displays using the runtime-configured T017 client.
+Added descriptive citations, applied context, requested-context controls, safe
+errors, polite result announcements and prominent assertive emergency guidance
+with contact links. State is memory-only; End session and pagehide clear draft,
+results, errors and context, abort pending requests and ignore late responses.
+End session restores question focus. Styles provide visible focus, readable
+contrast, wrapping and keyboard-accessible controls. Existing T020 tests first
+failed (13/13) on the absent form; all now pass. Added four unit cases for
+referral/unresolved/emergency rendering, page exit and focus restoration.
+Frontend validation: 43 unit tests, 6 Chromium tests and the axe smoke check pass;
+type checking, ESLint, production build and whitespace checks pass. Browser tests
+required execution outside the sandbox because localhost binding was denied.
+No dependencies or backend changes. Focused follow-up submission remains T036;
+full PostgreSQL/provider validation remains T032 and manual WCAG review T046.
+Run from `frontend/`: `npm test`, `npm run typecheck`, `npm run lint`,
+`npm run build`, `npm run test:e2e`, and `npm run test:a11y`.
+
 - [ ] T032 [US1] Document and exercise local database population in `README.md`: environment/model configuration, supported document formats, Docker Compose build/start, Alembic upgrade, mounted approved manifest, the ingestion/rebuild command, test-only seeding versus live approval, corpus/index inspection and representative retrieval/citation checks; run T018–T020 against the real PostgreSQL fixture corpus
 
 **Checkpoint**: The complete RAG workflow works from approved input through verified student response. Shared safety/context gates remain enabled. This is the internal MVP validation point; complete remaining story and release acceptance checks before student launch.

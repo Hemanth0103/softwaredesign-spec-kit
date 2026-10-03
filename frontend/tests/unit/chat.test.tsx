@@ -62,6 +62,39 @@ function expectCleared() {
 }
 
 describe('student answers and session state (T020)', () => {
+  it.each(['referral', 'unresolved'] as const)('renders the %s limitation and descriptive office contact', async outcome => {
+    respond = async () => json({ outcome, limitation: 'A reliable fixture answer is unavailable.',
+      officeName: 'PNW fixture office', contactUrl: 'https://www.pnw.edu/registrar/' });
+    render(<App />);
+    await ask();
+    await screen.findByText('A reliable fixture answer is unavailable.');
+    expectAnnounced('A reliable fixture answer is unavailable.');
+    expect(screen.getByRole('link', { name: 'PNW fixture office' }).getAttribute('href')).toBe('https://www.pnw.edu/registrar/');
+  });
+
+  it('prominently announces emergency guidance and renders actionable contacts', async () => {
+    respond = async () => json({ outcome: 'emergency', guidance: 'Fixture emergency guidance.', contacts: [{
+      officeName: 'Fixture safety office', contactUrl: 'https://www.pnw.edu/public-safety/', phone: '911', email: 'fixture@pnw.edu',
+    }] });
+    render(<App />);
+    await ask();
+    await screen.findByText('Fixture emergency guidance.');
+    expect(screen.getByRole('alert').textContent).toContain('Fixture emergency guidance.');
+    expect(screen.getByRole('link', { name: '911' }).getAttribute('href')).toBe('tel:911');
+    expect(screen.getByRole('link', { name: 'fixture@pnw.edu' }).getAttribute('href')).toBe('mailto:fixture@pnw.edu');
+    expect(screen.queryByRole('heading', { name: 'Answer' })).toBeNull();
+  });
+
+  it('clears memory on page exit and returns focus to the question at session end', async () => {
+    render(<App />);
+    await ask();
+    await screen.findByText(answer.answer);
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expectCleared();
+    fireEvent.click(screen.getByRole('button', { name: /end session/i }));
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: /question/i }));
+  });
+
   it('submits a labeled question without requiring unrelated context', async () => {
     render(<App />);
     await ask();
