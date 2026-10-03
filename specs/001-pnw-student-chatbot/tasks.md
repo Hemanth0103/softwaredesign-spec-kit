@@ -270,7 +270,26 @@ whitespace checks pass. Validation used an isolated pgvector container/database;
 no dependencies or later tasks changed. A live provider factory must be supplied
 by the deployment; live-provider and full-story acceptance remain later checks.
 
-- [ ] T028 [US1] Implement hybrid full-text and compatible exact pgvector retrieval in `backend/app/services/retrieval.py`; apply approved/active/effective/campus/program/course/term predicates before ranking and recheck results, preserving conflict information for an unresolved outcome rather than silently choosing another policy; return relevant chunk content and official source metadata, not navigation links alone
+- [X] T028 [US1] Implement hybrid full-text and compatible exact pgvector retrieval in `backend/app/services/retrieval.py`; apply approved/active/effective/campus/program/course/term predicates before ranking and recheck results, preserving conflict information for an unresolved outcome rather than silently choosing another policy; return relevant chunk content and official source metadata, not navigation links alone
+T028 validation (2026-10-03): Added exact pgvector cosine and PostgreSQL
+full-text retrieval with reciprocal rank fusion, governed scope/date filtering
+before ranking, materialized embedding-identity filtering before cosine evaluation,
+and fresh eligibility checks after ranking. Returned chunks preserve source IDs,
+canonical official URLs/titles, headings, table context, anchors and revision scope.
+Relevant conflicts return diagnostics and no answer excerpts, including when the
+result limit would otherwise hide them. Semantic candidates require cosine similarity
+≥0.5 by default; lexical matches also qualify. Relevance remains candidate selection,
+not proof of claim support; T029 must verify and recheck after generation.
+Observed four missing-module unit failures before implementation. All 23 focused
+checks pass with real PostgreSQL/pgvector, including scope/effective boundaries,
+embedding identity/dimension/zero-vector handling, unrelated versus relevant
+conflicts and retirement between ranking and recheck. Implemented backend regression:
+453 passed, no skips, two upstream TestClient deprecation warnings. Future T029–T030
+chat suites were excluded. Ruff, full-app mypy and diff whitespace checks pass.
+Reproduce with T006_TEST_DATABASE_URL pointing to a dedicated pgvector database:
+`backend/.venv/bin/pytest backend/tests/unit/test_retrieval.py
+backend/tests/integration/test_retrieval.py`. No later tasks or dependencies changed.
+
 - [ ] T029 [US1] Implement structured generated-answer validation in `backend/app/services/citation_verifier.py`; every citation must match a retrieved eligible official canonical HTTPS URL/title and supporting excerpt, each policy claim must be supported, and applicable context must match; recheck source eligibility before sending the answer and fail safely on unsupported or malformed output
 - [ ] T030 [US1] Connect safety → account/context checks → eligible retrieval → grounded generation → citation verification → response in `backend/app/services/chat_service.py` and expose `POST /api/v1/chat/answers` in `backend/app/api/routes/chat.py`; use the foundation decisions for all five outcomes, including provider timeout/unavailability, and never run normal retrieval/generation first for emergencies
 - [ ] T031 [US1] Build the accessible student chat form, session-only state and all outcome rendering in `frontend/src/features/chat/StudentChat.tsx`, `frontend/src/features/chat/chatState.ts`, and `frontend/src/styles/accessibility.css`; use memory/session storage only, clear at session end, display descriptive citations/context and prominent emergency contacts, and provide labels, visible focus, keyboard access, contrast and live announcements

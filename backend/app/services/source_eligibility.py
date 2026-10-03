@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, or_, select, true
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import utc_now
@@ -54,9 +54,13 @@ def is_eligible(
 
 
 def eligible_revisions(
-    *, context: Context, now: datetime | None = None
+    *, context: Context, now: datetime | None = None, include_conflicts: bool = False
 ) -> Select[tuple[SourceRevision]]:
-    """Use before retrieval/ranking; missing material context excludes scoped evidence."""
+    """Filter before ranking. Conflict diagnostics are NEVER answer evidence.
+
+    include_conflicts also selects unresolved/grouped rows for retrieval diagnostics.
+    The default and all publication rechecks continue to exclude them.
+    """
     instant = now or utc_now()
     if instant.utcoffset() is None:
         raise ValueError("Eligibility clock must be timezone-aware")
@@ -66,9 +70,11 @@ def eligible_revisions(
         .where(
             ApprovedSource.approval_status == "approved",
             ApprovedSource.lifecycle_status == "active",
-            SourceRevision.status == "active",
+            SourceRevision.status.in_(("active", "unresolved"))
+            if include_conflicts
+            else SourceRevision.status == "active",
             SourceRevision.readable.is_(True),
-            SourceRevision.conflict_group.is_(None),
+            true() if include_conflicts else SourceRevision.conflict_group.is_(None),
             or_(SourceRevision.effective_from.is_(None), SourceRevision.effective_from <= instant),
             or_(SourceRevision.effective_until.is_(None), SourceRevision.effective_until > instant),
             or_(SourceRevision.campus == "all", SourceRevision.campus == context.get("campus")),
