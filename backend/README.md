@@ -731,14 +731,59 @@ imports serialize their final checks and reuse one committed set of chunk IDs.
 Unchanged source/hash/model/version/dimension imports reuse existing embeddings.
 A changed dimension or chunk layout under an existing model/version fails; use a
 new embedding version for a rebuild. Chunks remain immutable. This function does
-not approve or activate revisions; governance activation controls retrieval, and
-refresh orchestration remains T026.
+not approve or activate revisions; governance activation controls retrieval.
+Use the T026 refresh workflow below for changed content and model rebuilds.
 
 Run storage validation with a dedicated PostgreSQL database containing pgvector:
 
 ```sh
 T006_TEST_DATABASE_URL=postgresql+psycopg://... .venv/bin/pytest \
-  tests/integration/test_ingestion.py -k 'not changed_content'
+  tests/integration/test_ingestion.py
 ```
 
-The excluded changed-content case requires the T026 refresh module.
+### Review-first refresh and rebuild (T026)
+
+`app.ingestion.refresh.register_revision(session, source_id=..., content=...,
+retrieved_at=..., media_type="text/html", base_revision_id=None)` registers
+changed bytes under a new immutable SHA-256 hash with `pending_review` status.
+The source must be official, approved, active, audited and conflict-free. Pass
+an aware retrieval timestamp and the actual supported media type (HTML, PDF or
+DOCX). Registration uses the caller's transaction; commit on success or roll
+back on failure. Concurrent registrations serialize on the source and reuse
+one revision for the same hash.
+
+Scope and effective dates come from an explicit reviewed base revision or the
+single active revision, falling back to a single approved revision. An ambiguous
+base requires `base_revision_id`. The office must review these inherited fields
+along with the changed content before approval. Extraction establishes
+readability; unreadable supported content remains pending and cannot be prepared.
+For a pending hash previously registered by collection, registration establishes
+readability from the matching bytes without changing scope, retrieval time or
+approval. Existing approved, active and terminal hashes retain their state;
+registration never reactivates them.
+
+The workflow is explicit:
+
+1. Register changed bytes (including establishing readability for collector-created
+   pending revisions) and commit. The old active revision stays eligible.
+2. The owning office calls `source_governance.review_source` with `action="approve"`
+   for the pending revision and a non-empty reason; commit that review.
+3. Call `refresh.rebuild_revision(factory, revision_id=..., content=...,
+   media_type=..., embed=..., model=..., version=..., dimension=...,
+   chunk_size=800, chunk_overlap=100, timeout_seconds=6.0)`. It reuses T025 storage
+   and returns committed immutable chunk IDs. It never grants approval or activation.
+4. The owning office explicitly calls `review_source` with `action="activate"`
+   and the prepared revision ID. Its transaction supersedes the previous active
+   revision and appends both supersede and activate audits together. Failure rolls
+   back the entire transition; old chunks and review history remain intact.
+
+For a model rebuild, skip registration/review when bytes and approval are unchanged
+and call `rebuild_revision` with a new model/version identity. Old chunks remain
+immutable; matching retries reuse IDs without embedding again. Dimension/layout
+changes under an existing identity fail. Preparation rechecks hash, approval audits,
+readability, conflicts, effective dates and lifecycle after embedding, so retirement
+or rejection during a provider call cannot publish or reactivate material.
+
+The synchronous manifest/`--rebuild` CLI remains T027. No scheduler, cache or new
+service is introduced. The PostgreSQL command above exercises the complete
+refresh/rebuild and ingestion suite.

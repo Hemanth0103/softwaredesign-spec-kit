@@ -105,7 +105,8 @@ def revision(database, corpus_clock):
 
 
 def ingest(database, revision, **kwargs):
-    module = import_module("app.ingestion.store")
+    rebuild = kwargs.pop("rebuild", False)
+    module = import_module("app.ingestion.refresh" if rebuild else "app.ingestion.store")
     options = dict(
         content=CONTENT,
         media_type="text/html",
@@ -117,7 +118,8 @@ def ingest(database, revision, **kwargs):
         chunk_overlap=0,
     )
     options.update(kwargs)
-    return module.ingest_revision(database, revision_id=revision, **options)
+    prepare = module.rebuild_revision if rebuild else module.ingest_revision
+    return prepare(database, revision_id=revision, **options)
 
 
 def chunks(database):
@@ -300,7 +302,7 @@ def test_changed_content_requires_review_and_preserves_history(database, revisio
             == new_id
         )
     with pytest.raises(store.IngestionError):
-        ingest(database, new_id, content=changed)
+        ingest(database, new_id, content=changed, rebuild=True)
     assert {c.id for c in chunks(database)} == old_ids
     with database.begin() as session:
         review_source(
@@ -311,7 +313,7 @@ def test_changed_content_requires_review_and_preserves_history(database, revisio
             reason="Reviewed changed content",
             revision_id=new_id,
         )
-    ingest(database, new_id, content=changed)
+    ingest(database, new_id, content=changed, rebuild=True)
     with database.begin() as session:
         new = session.get(SourceRevision, new_id)
         if new.status == "approved":
@@ -353,6 +355,7 @@ def test_model_rebuild_retains_immutable_compatible_identities(database, revisio
         database,
         revision,
         model="new-model",
+        rebuild=True,
         version="v2",
         dimension=2,
         embed=lambda texts: [[0.5, 1.0] for _ in texts],
@@ -368,6 +371,7 @@ def test_model_rebuild_retains_immutable_compatible_identities(database, revisio
         database,
         revision,
         model="new-model",
+        rebuild=True,
         version="v2",
         dimension=2,
         embed=lambda texts: pytest.fail("Rebuild retry must be idempotent"),
@@ -459,3 +463,221 @@ def test_final_gate_rechecks_review_readability_and_dates(database, revision, ch
     with pytest.raises(module.IngestionError):
         ingest(database, revision, embed=embed)
     assert chunks(database) == []
+
+
+@pytest.mark.parametrize("state", ["rejected", "retired", "superseded", "conflict"])
+def test_refresh_blocks_ineligible_source(database, revision, state):
+    refresh = import_module("app.ingestion.refresh")
+    with database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        source_id = old.source_id
+        if state == "rejected":
+            old.source.approval_status = state
+        elif state == "conflict":
+            old.conflict_group = uuid4()
+        else:
+            old.source.lifecycle_status = state
+    with database.begin() as session:
+        with pytest.raises(refresh.RefreshError):
+            refresh.register_revision(
+                session,
+                source_id=source_id,
+                content=b"<main>Updated policy</main>",
+                retrieved_at=utc_now(),
+            )
+        assert len(session.scalars(select(SourceRevision)).all()) == 1
+
+
+def test_refresh_preserves_scope_and_retry_provenance(database, revision):
+    refresh = import_module("app.ingestion.refresh")
+    with database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        new = refresh.register_revision(
+            session,
+            source_id=old.source_id,
+            content=b"<main>Updated policy</main>",
+            retrieved_at=utc_now(),
+        )
+        for field in (
+            "campus",
+            "program",
+            "course",
+            "academic_term",
+            "effective_from",
+            "effective_until",
+        ):
+            assert getattr(new, field) == getattr(old, field)
+        assert new.readable and new.status == "pending_review"
+        first_time = new.retrieved_at
+        retry = refresh.register_revision(
+            session,
+            source_id=old.source_id,
+            content=b"<main>Updated policy</main>",
+            retrieved_at=utc_now(),
+        )
+        assert retry.id == new.id and retry.retrieved_at == first_time
+        assert len(session.scalars(select(SourceReviewEvent)).all()) == 2
+
+
+def test_refresh_unreadable_content_stays_pending(database, revision):
+    refresh = import_module("app.ingestion.refresh")
+    with database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        new = refresh.register_revision(
+            session,
+            source_id=old.source_id,
+            content=b"<html><body></body></html>",
+            retrieved_at=utc_now(),
+        )
+        assert new.status == "pending_review" and not new.readable
+
+
+def test_concurrent_refresh_registers_one_revision(database, revision):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    refresh = import_module("app.ingestion.refresh")
+    with database() as session:
+        source_id = session.get(SourceRevision, revision).source_id
+    barrier = Barrier(2)
+
+    def register():
+        barrier.wait(timeout=3)
+        with database.begin() as session:
+            return refresh.register_revision(
+                session,
+                source_id=source_id,
+                content=b"<main>Updated policy</main>",
+                retrieved_at=utc_now(),
+            ).id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(register) for _ in range(2)]
+        assert futures[0].result(timeout=10) == futures[1].result(timeout=10)
+    with database() as session:
+        assert len(session.scalars(select(SourceRevision)).all()) == 2
+
+
+def test_refresh_retry_preserves_terminal_revision(database, revision):
+    refresh = import_module("app.ingestion.refresh")
+    with database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        source_id = old.source_id
+        review_source(
+            session,
+            reviewer=OWNER,
+            source_id=source_id,
+            revision_id=old.id,
+            action="activate",
+            reason="Publish fixture",
+        )
+        review_source(
+            session,
+            reviewer=OWNER,
+            source_id=source_id,
+            revision_id=old.id,
+            action="retire",
+            reason="Retire fixture",
+        )
+        retry = refresh.register_revision(
+            session,
+            source_id=source_id,
+            content=CONTENT,
+            retrieved_at=utc_now(),
+        )
+        assert retry.id == revision and retry.status == "retired"
+    with pytest.raises(import_module("app.ingestion.store").IngestionError):
+        ingest(database, revision)
+
+
+def test_refresh_registration_rolls_back(database, revision):
+    refresh = import_module("app.ingestion.refresh")
+    with pytest.raises(RuntimeError), database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        refresh.register_revision(
+            session,
+            source_id=old.source_id,
+            content=b"<main>Updated policy</main>",
+            retrieved_at=utc_now(),
+        )
+        raise RuntimeError("Abort caller transaction")
+    with database() as session:
+        assert len(session.scalars(select(SourceRevision)).all()) == 1
+
+
+def test_refresh_activation_failure_preserves_old_revision_and_audits(database, revision):
+    refresh = import_module("app.ingestion.refresh")
+    changed = CONTENT.replace(b"visible", b"clearly displayed")
+    ingest(database, revision)
+    with database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        source_id = old.source_id
+        review_source(
+            session,
+            reviewer=OWNER,
+            source_id=source_id,
+            revision_id=revision,
+            action="activate",
+            reason="Publish fixture",
+        )
+        new = refresh.register_revision(
+            session, source_id=source_id, content=changed, retrieved_at=utc_now()
+        )
+        new_id = new.id
+        review_source(
+            session,
+            reviewer=OWNER,
+            source_id=source_id,
+            revision_id=new_id,
+            action="approve",
+            reason="Review update",
+        )
+    ingest(database, new_id, content=changed, rebuild=True)
+    with database() as session:
+        before = {row.id for row in session.scalars(select(SourceReviewEvent))}
+
+    def fail_activation(mapper, connection, target):
+        if target.action == "activate":
+            raise RuntimeError("Injected audit failure")
+
+    event.listen(SourceReviewEvent, "before_insert", fail_activation)
+    try:
+        with pytest.raises(RuntimeError), database.begin() as session:
+            review_source(
+                session,
+                reviewer=OWNER,
+                source_id=source_id,
+                revision_id=new_id,
+                action="activate",
+                reason="Publish update",
+            )
+    finally:
+        event.remove(SourceReviewEvent, "before_insert", fail_activation)
+    with database() as session:
+        assert session.get(SourceRevision, revision).status == "active"
+        assert session.get(SourceRevision, new_id).status == "approved"
+        assert {row.id for row in session.scalars(select(SourceReviewEvent))} == before
+
+
+def test_refresh_establishes_readability_for_collector_pending_revision(database, revision):
+    refresh = import_module("app.ingestion.refresh")
+    changed = CONTENT.replace(b"visible", b"clearly displayed")
+    with database.begin() as session:
+        old = session.get(SourceRevision, revision)
+        pending = SourceRevision(
+            source_id=old.source_id,
+            content_hash=hashlib.sha256(changed).hexdigest(),
+            retrieved_at=utc_now(),
+            campus=old.campus,
+        )
+        session.add(pending)
+        session.flush()
+        assert not pending.readable
+        result = refresh.register_revision(
+            session,
+            source_id=old.source_id,
+            content=changed,
+            retrieved_at=utc_now(),
+        )
+        assert result.id == pending.id and result.readable
+        assert result.status == "pending_review"

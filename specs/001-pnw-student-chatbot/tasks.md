@@ -225,7 +225,29 @@ Ruff lint/format, full-app mypy and diff whitespace checks pass. Validation used
 an isolated pgvector PostgreSQL container/database; no new dependencies.
 Run the README storage command with T006_TEST_DATABASE_URL configured.
 
-- [ ] T026 [US1] Implement refresh/rebuild in `backend/app/ingestion/refresh.py`: changed content creates a new immutable-hash revision pending owning-office review, approval permits regenerated chunks/embeddings, and activation atomically supersedes the old revision while preserving audit/history; model changes rebuild compatible immutable chunks, and retries never reactivate rejected, retired, superseded or conflicting material
+- [X] T026 [US1] Implement refresh/rebuild in `backend/app/ingestion/refresh.py`: changed content creates a new immutable-hash revision pending owning-office review, approval permits regenerated chunks/embeddings, and activation atomically supersedes the old revision while preserving audit/history; model changes rebuild compatible immutable chunks, and retries never reactivate rejected, retired, superseded or conflicting material
+T026 validation (2026-10-03): Added review-first refresh registration with immutable
+content hashes, inherited reviewed scope/effective dates, official/source-approval
+audit checks, source-before-revision locking, conflict/terminal-source gates and
+concurrent idempotent registration. Extraction establishes readability for new
+and collector-created pending revisions without approval. Matching existing hashes
+preserve identity, provenance and lifecycle; terminal evidence is never reactivated.
+Rebuild delegates to T025 atomic storage, preserving old model identities and
+rechecking governance after provider work. Activation reuses T013 owning-office
+governance, atomically superseding old revisions with append-only audits/history.
+Documented the explicit registration → review → preparation → activation workflow;
+CLI remains T027. Observed 10 missing-module failures before implementation and
+the collector-readability failure before adding that handoff. All 37 PostgreSQL
+ingestion cases pass, including changed-content review/history, immutable model
+rebuilds, concurrent registration, rollback and activation-audit failure rollback.
+Implemented backend regression: 416 passed, no skips (two upstream deprecation
+warnings); future chat/grounded-answer suites excluded. Ruff lint, formatting of
+changed Python files, full-app mypy and diff whitespace checks pass. The full-format
+check reports pre-existing formatting in extract.py and test_extraction.py; these
+files were left unchanged. Validation used an isolated pgvector database;
+no dependencies or later tasks changed. Run the README ingestion command with
+T006_TEST_DATABASE_URL configured.
+
 - [ ] T027 [US1] Assemble one synchronous CLI in `backend/app/ingestion/__main__.py` supporting `python -m app.ingestion --manifest <path>` and `--rebuild`, with actionable counts/errors and nonzero failure exits; reuse the API image, support safe reruns and explicit local/test-only fixture/referral seeding, and never let a normal import grant approval
 - [ ] T028 [US1] Implement hybrid full-text and compatible exact pgvector retrieval in `backend/app/services/retrieval.py`; apply approved/active/effective/campus/program/course/term predicates before ranking and recheck results, preserving conflict information for an unresolved outcome rather than silently choosing another policy; return relevant chunk content and official source metadata, not navigation links alone
 - [ ] T029 [US1] Implement structured generated-answer validation in `backend/app/services/citation_verifier.py`; every citation must match a retrieved eligible official canonical HTTPS URL/title and supporting excerpt, each policy claim must be supported, and applicable context must match; recheck source eligibility before sending the answer and fail safely on unsupported or malformed output
