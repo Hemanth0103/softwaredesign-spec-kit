@@ -290,7 +290,27 @@ Reproduce with T006_TEST_DATABASE_URL pointing to a dedicated pgvector database:
 `backend/.venv/bin/pytest backend/tests/unit/test_retrieval.py
 backend/tests/integration/test_retrieval.py`. No later tasks or dependencies changed.
 
-- [ ] T029 [US1] Implement structured generated-answer validation in `backend/app/services/citation_verifier.py`; every citation must match a retrieved eligible official canonical HTTPS URL/title and supporting excerpt, each policy claim must be supported, and applicable context must match; recheck source eligibility before sending the answer and fail safely on unsupported or malformed output
+- [X] T029 [US1] Implement structured generated-answer validation in `backend/app/services/citation_verifier.py`; every citation must match a retrieved eligible official canonical HTTPS URL/title and supporting excerpt, each policy claim must be supported, and applicable context must match; recheck source eligibility before sending the answer and fail safely on unsupported or malformed output
+
+T029 validation (2026-10-03): Added fail-closed internal/public draft validation,
+canonical citation construction, exact applied-context checks, full cited-excerpt
+support coverage and a fresh database eligibility/content/metadata recheck.
+Support accepts complete excerpts with whitespace normalization only; paraphrases
+and shortened claims are rejected rather than assuming semantic entailment.
+Documented this limit and the T030 caller contract in `backend/README.md`.
+Observed missing-module failure before implementation. All 18 unit tests pass;
+all 14 real PostgreSQL/pgvector checks pass, including post-retrieval retirement,
+supersession, approval, readability, expiry/future dates, conflicts, all four
+scope fields and changed title/URL. Implemented backend regression: 484 passed,
+no skips, two upstream TestClient deprecation warnings, before the final additional
+multi-source/date test; the expanded 18-test unit suite also passes. Future
+T030 HTTP/chat suites were excluded. Ruff, full-app mypy and whitespace checks pass.
+Validation used an isolated `pnw-t029-validation` container and `pnw_t029_test`
+database; no application data was used. Reproduce with `T006_TEST_DATABASE_URL`
+and `backend/.venv/bin/pytest backend/tests/unit/test_citation_verifier.py
+backend/tests/integration/test_citation_verifier.py`. No new dependencies or later
+task implementations were added.
+
 - [ ] T030 [US1] Connect safety → account/context checks → eligible retrieval → grounded generation → citation verification → response in `backend/app/services/chat_service.py` and expose `POST /api/v1/chat/answers` in `backend/app/api/routes/chat.py`; use the foundation decisions for all five outcomes, including provider timeout/unavailability, and never run normal retrieval/generation first for emergencies
 - [ ] T031 [US1] Build the accessible student chat form, session-only state and all outcome rendering in `frontend/src/features/chat/StudentChat.tsx`, `frontend/src/features/chat/chatState.ts`, and `frontend/src/styles/accessibility.css`; use memory/session storage only, clear at session end, display descriptive citations/context and prominent emergency contacts, and provide labels, visible focus, keyboard access, contrast and live announcements
 - [ ] T032 [US1] Document and exercise local database population in `README.md`: environment/model configuration, supported document formats, Docker Compose build/start, Alembic upgrade, mounted approved manifest, the ingestion/rebuild command, test-only seeding versus live approval, corpus/index inspection and representative retrieval/citation checks; run T018–T020 against the real PostgreSQL fixture corpus

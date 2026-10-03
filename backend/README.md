@@ -865,3 +865,37 @@ PostgreSQL database with pgvector to execute integration tests):
 ```sh
 backend/.venv/bin/pytest backend/tests/unit/test_ingestion_cli.py backend/tests/integration/test_ingestion_cli.py
 ```
+# Generated-answer verification (T029)
+
+`app.services.citation_verifier.verify_answer(factory, draft=..., retrieval=...,
+context=..., now=...)` returns a validated `SupportedAnswer` or raises the
+privacy-safe `CitationVerificationError`. T030 must call it immediately before
+returning an answer and select a safe referral/unresolved outcome on failure.
+The student route and chat orchestration remain T030.
+
+The verifier accepts the AI adapter's `{answer, citations}` draft with
+`{"chunkId": "UUID"}` citations, or the strict public supported-answer shape
+with exact canonical URL/title citations. It constructs public citations from
+retrieved metadata and applied context from trusted request context; supplied
+applied context must match. Provider-supplied context labels are rejected.
+Relevant retrieval conflicts, missing evidence, unknown fields, invented links,
+irrelevant citations, and unsupported claims fail closed.
+
+Support is intentionally conservative: the complete answer must consist of
+complete cited excerpt texts, with whitespace normalization only. Multiple
+complete excerpts can be joined with whitespace. Paraphrases, partial excerpts,
+and altered dates/conditions/negation are rejected because text similarity alone
+cannot prove meaning. This limits answer fluency; it is not a semantic entailment
+checker or a substitute for governed source review. It preserves table/header
+context by requiring complete chunk text.
+
+A fresh database transaction checks cited chunk/revision/source identity,
+content, title, URL, scope and section metadata against eligible approved, active,
+readable, nonconflicting, effective revisions. Retirement and scope changes during
+generation therefore block return. A concurrent commit after that final read is
+outside the database/HTTP boundary. No drafts, questions or transcripts are stored
+or logged by this module.
+
+Validate with a dedicated pgvector database configured through
+`T006_TEST_DATABASE_URL`:
+`backend/.venv/bin/pytest backend/tests/unit/test_citation_verifier.py backend/tests/integration/test_citation_verifier.py`.
